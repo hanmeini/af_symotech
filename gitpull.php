@@ -20,6 +20,13 @@ $is_localhost = in_array($_SERVER['HTTP_HOST'] ?? '', ['localhost', '127.0.0.1']
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'api_trigger_pull') {
     header('Content-Type: text/plain; charset=utf-8');
 
+    $received_secret = $_POST['secret'] ?? '';
+    if (empty($cpanel_secret) || !hash_equals($cpanel_secret, $received_secret)) {
+        http_response_code(403);
+        echo "ERROR: Kode verifikasi (Secret Key) tidak cocok atau belum dikonfigurasi.";
+        exit();
+    }
+
     // Jalankan git fetch & reset di server cPanel untuk overwrite untracked files
     set_time_limit(120);
     echo "--- Menjalankan git fetch & reset di cPanel (af.symotech.id) ---\n";
