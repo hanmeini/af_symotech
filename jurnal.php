@@ -1,0 +1,614 @@
+<?php
+session_start([
+    'cookie_lifetime' => 86400, // Cookie berlaku selama 1 hari (86400 detik)
+    'cookie_httponly' => true, // Cookie hanya dapat diakses melalui HTTP (JavaScript tidak bisa membaca)
+    'cookie_secure' => isset($_SERVER['HTTPS']), // Cookie hanya dikirim melalui HTTPS jika tersedia
+    'use_only_cookies' => true, // Hanya gunakan cookie untuk session (tanpa URL session ID)
+    'use_strict_mode' => true, // Cegah sesi yang dicuri digunakan kembali
+]);
+$allowed_referer_domain = "https://af.symotech.id/";
+
+// Periksa apakah HTTP_REFERER ada dan berasal dari domain yang diizinkan
+if (false /* referer bypassed */) {
+    header("Location: https://af.symotech.id");
+    exit();
+}
+
+// Periksa apakah pengguna sudah login
+if (!isset($_SESSION['username'])) {
+    header("Location: index.html");
+    exit();
+}
+
+// Load konfigurasi dari config.php
+require_once 'config.php';
+
+
+
+// Ambil variabel dari environment
+$servername = getenv('DB_HOST') ?: die("Kesalahan: DB_HOST tidak ditemukan.");
+$db_username = getenv('DB_USER') ?: die("Kesalahan: DB_USER tidak ditemukan.");
+$db_password = getenv('DB_PASS');
+$database = getenv('DB_NAME') ?: die("Kesalahan: DB_NAME tidak ditemukan.");
+
+
+
+// Buat koneksi ke database pertama
+$conn = new mysqli($servername, $db_username, $db_password, $database);
+
+// Periksa koneksi pertama
+if ($conn->connect_error) {
+    die("Koneksi ke database pertama gagal: " . $conn->connect_error);
+}
+
+
+?>
+<?php
+$query = "SELECT bulan, tahun FROM close ORDER BY tahun DESC, bulan DESC LIMIT 1";
+$result = $conn->query($query);
+
+$latestMonth = 0;
+$latestYear = 0;
+
+if ($result->num_rows > 0) {
+    $row = $result->fetch_assoc();
+    $latestMonth = $row["bulan"];
+    $latestYear = $row["tahun"];
+}
+
+// Pastikan require config.php jika diperlukan
+require_once 'config.php';
+
+// Ambil konfigurasi database dari environment
+$host = getenv('DB_HOST') ?: die("Kesalahan: DB_HOST tidak ditemukan.");
+$dbname = getenv('DB_NAME') ?: die("Kesalahan: DB_NAME tidak ditemukan.");
+$username = getenv('DB_USER') ?: die("Kesalahan: DB_USER tidak ditemukan.");
+$password = getenv('DB_PASS');
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES => false,
+    ]);
+} catch (PDOException $e) {
+    die("Koneksi database gagal: " . $e->getMessage());
+}
+
+// Jika perlu koneksi MySQLi (misalnya untuk kompatibilitas kode lama)
+$conn = new mysqli($host, $username, $password, $dbname);
+
+// Periksa koneksi MySQLi
+if ($conn->connect_error) {
+    die("Koneksi ke database gagal: " . $conn->connect_error);
+}
+
+
+try {
+    $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8", $username, $password);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Ambil kurs terbaru dari database
+    $sqlKurs = "SELECT kurs, tanggal FROM kurs ORDER BY tanggal DESC LIMIT 1";
+    $stmtKurs = $pdo->prepare($sqlKurs);
+    $stmtKurs->execute();
+    $resultKurs = $stmtKurs->fetch(PDO::FETCH_ASSOC);
+
+    $kurs = $resultKurs['kurs'] ?? 0;
+    $tanggal = $resultKurs['tanggal'] ?? 'Data tidak tersedia';
+} catch (PDOException $e) {
+    die("Koneksi gagal: " . $e->getMessage());
+}
+
+?>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        let latestMonth = <?php echo $latestMonth; ?>;
+        let latestYear = <?php echo $latestYear; ?>;
+
+        let dateInput = document.getElementById("tanggal");
+        
+        dateInput.addEventListener("change", function () {
+            let selectedDate = new Date(this.value);
+            let selectedMonth = selectedDate.getMonth() + 1; // JavaScript month starts from 0
+            let selectedYear = selectedDate.getFullYear();
+
+            if (selectedYear < latestYear || (selectedYear == latestYear && selectedMonth <= latestMonth)) {
+                alert("Tanggal tidak valid! Bulan dan tahun harus lebih besar dari yang terakhir di-close.");
+                this.value = "";
+            }
+        });
+    });
+</script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Form Jurnal</title>
+       <link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css'>
+    <style>
+        body {
+        color: maroon; /* Warna teks */
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-image: linear-gradient(to right, #ea90e6, #6c6cc9); /* Gradien dari atas ke bawah */
+    }
+        .container {
+            max-width: 1800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        
+
+        h2 {
+            text-align: center;
+            color: #333;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        form {
+            margin-top: 20px;
+        }
+        label {
+            font-weight: bold;
+        }
+        input[type="date"],
+        select,
+        textarea,
+        input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        input[type="number"] {
+            width: 100px;
+            padding: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-sizing: border-box;
+        }
+        input[type="submit"] {
+            width: 100%;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        input[type="submit"]:hover {
+            background-color: #45a049;
+        }
+        
+                th:nth-child(2), td:nth-child(2) {
+    width: 600px; /* Set lebar tetap */
+    max-width: 600px;
+    word-break: break-word; /* Memastikan teks bisa terpotong */
+    white-space: normal; /* Mengizinkan wrap */
+}
+        .balance {
+            font-weight: bold;
+        }
+        .green {
+            color: green;
+        }
+        .red {
+            color: red;
+        }
+        .home-icon i {
+        color: maroon;
+        font-size: 36px;
+         float: left;
+    }
+
+    .left-icon i {
+        color: maroon;
+        font-size: 24px;
+         float: right;
+    }
+
+
+
+
+#balance {
+    display: block; /* Menampilkan elemen sebagai blok */
+    visibility: visible; /* Membuat elemen terlihat */
+}
+
+
+
+       
+    </style>
+    <script>
+    function openCalPopup() {
+        window.open('cal.php', 'Pilih Kurs', 'width=800,height=600');
+    }
+
+    function setKurs(kurs, tanggal) {
+        document.getElementById('kurs').value = kurs;
+        document.getElementById('tanggal_kurs').value = tanggal;
+    }
+</script>
+</head>
+<body>
+      <div class='table-container'>
+    <a href='home.php' class='home-icon1'>
+        <i class='fas fa-home'></i>
+    </a>
+    <a href='home.php' class='left-icon'>
+        <i class='fa-solid fa-circle-left'></i>
+    </a>
+
+    <div class="container">
+        <h2>Form Jurnal</h2>
+        
+        <div style="display: flex; align-items: center; gap: 10px;"> 
+    <p style="font-size: 14px; color: gray; margin: 0;">
+        Kurs terbaru: <b>Rp <?= number_format($kurs, 0, ',', '.') ?></b> (<?= $tanggal ?>)
+    </p>
+    <button type="button" onclick="openCalPopup()" style="display: flex; align-items: center; gap: 5px;">
+        <i class="fa-solid fa-calendar-days"></i> calculator kurs
+    </button>
+</div>
+        <form id="formJurnal" action="save_jurnal.php" method="post" enctype="multipart/form-data">
+            <label for="tanggal">Tanggal:</label><br>
+               <input type="date" id="tanggal" name="tanggal" required>
+               
+                 <label for="location">Location:</label>
+            <select name="location[]" required>
+                <option value="" disabled selected>Pilih Lokasi</option>
+                 <?php
+              $sql2 = "SELECT idl, nama_cabang FROM location";
+                $result2 = $conn->query($sql2);
+                if ($result2->num_rows > 0) {
+                    while ($row = $result2->fetch_assoc()) {
+                        echo "<option value='{$row["idl"]}'>{$row["nama_cabang"]}</option>";
+                    }
+                } else {
+                    echo "<option value='' disabled>Tidak ada cabang tersedia</option>";
+                }
+                ?>
+            </select>
+
+          
+            
+          
+          
+       
+          
+           <label for="lampiran">Lampiran File:</label>
+    <input type="file" id="lampiran" name="lampiran[]"><br>
+            
+            <table id="jurnal_table">
+                <thead>
+                    <tr>
+                        <th>No.</th>
+                        <th>Account Code</th>
+                        <th></th>
+                        <th>Debet</th>
+                        <th>Kredit</th>
+                    
+                         <th>Keterangan</th>
+               
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>1</td>
+                        <td>
+                             <select name="coa[]" required onchange="updateAccountDetails(this)">
+        <option value="">Pilih COA</option>
+        <?php
+        $sql = "SELECT account_code, account_name FROM coa WHERE layer = 4 
+                AND account_code NOT LIKE '11%' 
+                AND account_code NOT LIKE '12%'";
+        $result = $conn->query($sql);
+        if ($result->num_rows > 0) {
+            while ($row = $result->fetch_assoc()) {
+                echo "<option value='{$row['account_code']}' data-name='{$row['account_name']}'>
+                        {$row['account_code']} - {$row['account_name']}
+                      </option>";
+            }
+        } else {
+            echo "<option value='' disabled>Tidak ada COA tersedia</option>";
+        }
+        ?>
+    </select>
+ <input type="hidden" name="account_code[]" readonly>
+    <input type="hidden" name="account_name[]" readonly>
+                        </td>
+                        <td>
+                            
+                        </td>
+               <td>
+ <input 
+    type="text" 
+    name="debet[]" 
+    min="0" 
+    value=" " 
+    oninput="formatNumber(this)" 
+    onfocus="removeFormatting(this)" 
+    onblur="applyFormatting(this)" 
+    style="text-align: right;">
+</td>
+<td>
+ <input 
+    type="text" 
+    name="kredit[]" 
+    min="0" 
+    value=" " 
+    oninput="formatNumber(this)" 
+    onfocus="removeFormatting(this)" 
+    onblur="applyFormatting(this)" 
+    style="text-align: right;">
+</td>
+                    
+                  <td><input type="text" name="keterangan[]" ></td>
+                    </tr>
+                </tbody>
+                <tfoot>
+                    <tr>
+                        <td></td>
+                        <td colspan="2" style="text-align: right;">Total</td>
+                        <td id="total_debet">0</td>
+                        <td id="total_kredit">0</td>
+                     
+                         <td id="balance" class="balance"> balance</td>
+                         
+               
+                  
+                    </tr>
+            
+                    </tr>
+                </tfoot>
+            </table>
+            
+            <button type="button" onclick="addRow()">Tambah Baris</button>
+            <br>
+            <br>
+           <input type="submit" id="submit_button" value="Submit">
+
+        </form>
+    </div>
+
+    <script>
+       function calculateTotal() {
+    var table = document.getElementById("jurnal_table");
+    var tbody = table.querySelector("tbody");
+    var rows = tbody.querySelectorAll("tr");
+    var totalDebet = 0;
+    var totalKredit = 0;
+
+    rows.forEach(function (row) {
+        var debetInput = row.querySelector('input[name="debet[]"]');
+        var kreditInput = row.querySelector('input[name="kredit[]"]');
+
+        // Ambil nilai debet dan kredit, hapus format ribuan
+        var debetValue = debetInput ? parseFloat(debetInput.value.replace(/,/g, '').trim()) : 0;
+        var kreditValue = kreditInput ? parseFloat(kreditInput.value.replace(/,/g, '').trim()) : 0;
+
+        // Tambahkan ke total jika valid
+        if (!isNaN(debetValue)) totalDebet += debetValue;
+        if (!isNaN(kreditValue)) totalKredit += kreditValue;
+    });
+
+    // Hitung balance
+    var balance = totalDebet - totalKredit;
+
+    // Format angka ribuan
+    function formatRibuan(angka) {
+        return angka.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    // Tampilkan total debet, kredit, dan balance
+    document.getElementById("total_debet").innerText = formatRibuan(totalDebet.toFixed(2));
+    document.getElementById("total_kredit").innerText = formatRibuan(totalKredit.toFixed(2));
+    document.getElementById("balance").innerText = formatRibuan(balance.toFixed(2));
+}
+
+
+
+
+ function openbookingPopup() {
+    // Buka halaman cust.php sebagai popup
+    window.open('booking.php', 'Pilih Pelanggan', 'width=800,height=600');
+}
+// Fungsi untuk menerima kode dari popup
+function setbookingCode(kode_booking) {
+    document.getElementById('kode_booking').value = kode_booking;
+
+}
+        
+
+        function getAccountName(select) {
+            var accountCode = select.value;
+            var accountNameInput = select.parentNode.nextElementSibling.querySelector('input[name="account_name[]"]');
+
+            // Send AJAX request to fetch account name based on account code
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState == 4 && xhr.status == 200) {
+                    accountNameInput.value = xhr.responseText;
+                }
+            };
+            xhr.open("GET", "get_account_name.php?account_code=" + accountCode, true);
+            xhr.send();
+        }
+         // Panggil calculateTotal() setelah dokumen dimuat
+    window.onload = function() {
+        addRow();
+        calculateTotal(); // Panggil calculateTotal() untuk memastikan nilai saldo sudah diperbarui
+    };
+
+        function addRow() {
+            var table = document.getElementById("jurnal_table").getElementsByTagName('tbody')[0];
+            var newRow = document.createElement("tr");
+
+            newRow.innerHTML = `
+                <td>${table.rows.length + 1}</td>
+                <td>
+                     <select name="coa[]" required onchange="updateAccountDetails(this)">
+        <option value="">Pilih COA</option>
+        <?php
+        $sql = "SELECT account_code, account_name FROM coa WHERE layer = 4 
+                AND account_code NOT LIKE '11%' 
+                AND account_code NOT LIKE '12%'";
+        $result = $conn->query($sql);
+        if ($result->num_rows > 0) {
+            while ($row = $result->fetch_assoc()) {
+                echo "<option value='{$row['account_code']}' data-name='{$row['account_name']}'>
+                        {$row['account_code']} - {$row['account_name']}
+                      </option>";
+            }
+        } else {
+            echo "<option value='' disabled>Tidak ada COA tersedia</option>";
+        }
+        ?>
+    </select>
+ <input type="hidden" name="account_code[]" readonly>
+    <input type="hidden" name="account_name[]" readonly>
+                </td>
+                <td>
+                    
+                </td>
+          <td>
+ <input 
+    type="text" 
+    name="debet[]" 
+    min="0" 
+    value=" " 
+    oninput="formatNumber(this)" 
+    onfocus="removeFormatting(this)" 
+    onblur="applyFormatting(this)" 
+    style="text-align: right;">
+</td>
+<td>
+ <input 
+    type="text" 
+    name="kredit[]" 
+    min="0" 
+    value=" " 
+    oninput="formatNumber(this)" 
+    onfocus="removeFormatting(this)" 
+    onblur="applyFormatting(this)" 
+    style="text-align: right;">
+</td>
+  
+                  <td><input type="text" name="keterangan[]" ></td>
+                  <td> <button type="button" onclick="deleteRow(this)">Hapus</button> </td>
+
+            `;
+
+            table.appendChild(newRow);
+
+            // Set Account Name for the newly added row
+            getAccountName(newRow.querySelector('select[name="coa[]"]'));
+
+            // Calculate total after adding row
+            calculateTotal();
+        }
+
+        window.onload = function() {
+            addRow();
+        };
+
+        document.getElementById("jurnal_table").addEventListener('input', function() {
+            calculateTotal();
+        });
+        
+        
+      // Menghapus format ribuan saat fokus
+  function removeFormatting(input) {
+    input.value = input.value.replace(/,/g, ''); // Hapus koma
+  }
+
+  // Menambahkan format ribuan saat blur
+  function applyFormatting(input) {
+    let value = input.value.replace(/,/g, ''); // Hapus koma untuk mendapatkan nilai mentah
+    if (value !== '' && !isNaN(value)) {
+      input.value = formatWithCommas(value); // Tambahkan format ribuan
+    }
+  }
+
+  // Format angka besar saat pengguna mengetik
+  function formatLargeNumber(input) {
+    let value = input.value.replace(/,/g, ''); // Hapus koma
+    // Pastikan hanya angka yang diizinkan
+    if (/^\d*$/.test(value)) {
+      input.value = formatWithCommas(value); // Tampilkan dengan format ribuan
+    } else {
+      input.value = input.value.slice(0, -1); // Hapus karakter non-angka terakhir
+    }
+  }
+
+  // Fungsi untuk menambahkan format ribuan
+  function formatWithCommas(value) {
+    return value.replace(/\B(?=(\d{3})+(?!\d))/g, ','); // Tambahkan koma
+  }
+  
+  
+   document.getElementById('formJurnal').addEventListener('submit', function(event) {
+            // Tampilkan notifikasi konfirmasi
+            const confirmation = window.confirm("Apakah Anda sudah yakin dengan jurnalnya?");
+            if (!confirmation) {
+                // Jika pengguna memilih 'Tidak', batalkan submit
+                event.preventDefault();
+            }
+        });
+ function updateAccountDetails(select) {
+    let selectedOption = select.options[select.selectedIndex]; // Ambil opsi yang dipilih
+    let accountCode = selectedOption.value; // Ambil account_code
+    let accountName = selectedOption.getAttribute("data-name"); // Ambil account_name
+
+    let td = select.closest("td"); // Cari elemen <td> terdekat
+    if (td) {
+        td.querySelector("input[name='account_code[]']").value = accountCode;
+        td.querySelector("input[name='account_name[]']").value = accountName;
+        td.querySelector(".coa-display").textContent = `${accountCode} - ${accountName}`; // Tampilkan hasil
+    }
+}
+function deleteRow(button) {
+    var row = button.closest("tr"); // Cari baris terdekat
+    var table = document.getElementById("jurnal_table").getElementsByTagName('tbody')[0];
+
+    if (table.rows.length > 1) { // Pastikan setidaknya ada satu baris yang tersisa
+        row.remove(); // Hapus baris dari tabel
+        updateRowNumbers(); // Perbarui nomor baris
+        calculateTotal(); // Hitung ulang total setelah penghapusan
+    } else {
+        alert("Minimal harus ada satu baris jurnal.");
+    }
+}
+
+function updateRowNumbers() {
+    var table = document.getElementById("jurnal_table").getElementsByTagName('tbody')[0];
+    var rows = table.getElementsByTagName('tr');
+
+    for (var i = 0; i < rows.length; i++) {
+        rows[i].getElementsByTagName('td')[0].innerText = i + 1; // Update nomor urut
+    }
+}
+    </script>
+</body>
+</html>
