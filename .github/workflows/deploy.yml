@@ -1,0 +1,29 @@
+name: Deploy to cPanel via Webhook
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  web-deploy:
+    name: 🎉 Deploy
+    runs-on: ubuntu-latest
+    steps:
+    - name: 🚚 Get latest code
+      uses: actions/checkout@v4
+
+    - name: 🐘 Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.2'
+
+    - name: 🔍 Cek Error Kode (PHP Lint)
+      run: |
+        find . -name "*.php" -print0 | xargs -0 -n1 php -l || exit 1
+
+    - name: 🚀 Trigger cPanel git pull
+      run: |
+        curl -X POST https://af.symotech.id/gitpull.php \
+          -d "action=api_trigger_pull" \
+          -d "secret=${{ secrets.AF_DEPLOY_SECRET }}"
