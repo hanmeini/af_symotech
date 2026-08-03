@@ -1,0 +1,22 @@
+# Config & Credentials (jangan pernah di-commit!)
+config.php
+.env
+.env.local
+
+# Upload & temp files
+uploads/
+temp/
+tmp/
+*.log
+error_log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Zip files
+*.zip
