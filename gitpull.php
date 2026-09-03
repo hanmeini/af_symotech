@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     // Jalankan git fetch & reset di server cPanel untuk overwrite untracked files
     set_time_limit(120);
     echo "--- Menjalankan git fetch & reset di cPanel (af.symotech.id) ---\n";
-    $output = shell_exec("git fetch origin main && git reset --hard origin/main 2>&1");
+    $output = shell_exec("git fetch origin main 2>&1 && git checkout -B main origin/main 2>&1 && git reset --hard origin/main 2>&1");
     echo $output ?: "Command tidak menghasilkan output (pastikan Git terinstall & diizinkan di cPanel).";
     echo "\n\n--- Status commit terbaru setelah update ---\n";
     echo shell_exec("git log -n 1 --oneline 2>&1");
