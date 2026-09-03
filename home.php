@@ -49,6 +49,36 @@ try {
 }
 
 // ============================================
+// ✅ AUTO-ENSURE MENU TETO, SUHAN, OPP
+// ============================================
+try {
+    $check_menu = $pdo->prepare("SELECT id_menu FROM menu WHERE file_menu = ? LIMIT 1");
+    $ins_menu = $pdo->prepare("INSERT INTO menu (nama_menu, file_menu, icon_menu, urutan, aktif) VALUES (?, ?, ?, ?, 1)");
+    
+    $check_menu->execute(['teto.php']);
+    if (!$check_menu->fetch()) {
+        $ins_menu->execute(['TETO', 'teto.php', 'fa-solid fa-stamp', 25]);
+    }
+    
+    $check_menu->execute(['suhan.php']);
+    if (!$check_menu->fetch()) {
+        $ins_menu->execute(['SUHAN', 'suhan.php', 'fa-solid fa-file-contract', 26]);
+    }
+    
+    $check_menu->execute(['opp.php']);
+    if (!$check_menu->fetch()) {
+        $ins_menu->execute(['OPP / KTKLN', 'opp.php', 'fa-solid fa-id-card', 27]);
+    }
+    
+    $check_menu->execute(['biayapertki.php']);
+    if (!$check_menu->fetch()) {
+        $ins_menu->execute(['Report Biaya TKI', 'biayapertki.php', 'fa-solid fa-file-invoice-dollar', 28]);
+    }
+} catch (Throwable $e) {
+    // skip if menu table not available
+}
+
+// ============================================
 // ✅ ATURAN AKSES MENU
 // ============================================
 if ($jabatan == 1 || strtolower($jabatan) === 'super admin' || $username === 'af') {

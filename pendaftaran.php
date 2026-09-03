@@ -42,7 +42,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'cek_nik') {
         $cek = $conn->prepare("
             SELECT id 
             FROM masalah 
-            WHERE nik = ? 
+            WHERE LEFT(nik, 16) = ? 
             LIMIT 1
         ");
         $cek->bind_param("s", $nik16);
@@ -134,13 +134,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         die("Tanggal pendaftaran wajib diisi.");
     }
 
-    // CEK DUPLIKAT
+    // 1. CEK BLACKLIST MASALAH (BACKEND HARDENING)
+    $cek_masalah = $conn->prepare("SELECT id FROM masalah WHERE LEFT(nik, 16) = LEFT(?, 16) LIMIT 1");
+    $cek_masalah->bind_param("s", $nik);
+    $cek_masalah->execute();
+    $cek_masalah->store_result();
+    if ($cek_masalah->num_rows > 0) {
+        echo "<script>
+            alert('NIK ini terdaftar memiliki MASALAH dan tidak dapat didaftarkan kembali!');
+            window.location.href='detailmasalah.php?id=" . urlencode(substr($nik, 0, 16)) . "';
+        </script>";
+        exit;
+    }
+    $cek_masalah->close();
+
+    // 2. CEK MUNDUR
+    $cek_mundur = $conn->prepare("SELECT id FROM mundur WHERE LEFT(nik, 16) = LEFT(?, 16) AND edit = 'open' LIMIT 1");
+    $cek_mundur->bind_param("s", $nik);
+    $cek_mundur->execute();
+    $cek_mundur->store_result();
+    if ($cek_mundur->num_rows > 0) {
+        echo "<script>
+            alert('NIK ini masih memiliki pengajuan MUNDUR yang belum ditutup!');
+            window.location.href='home.php';
+        </script>";
+        exit;
+    }
+    $cek_mundur->close();
+
+    // 3. CEK DUPLIKAT AKTIF
     $cek = $conn->prepare("
         SELECT p.nik, l.nama_cabang, s.nama
         FROM pendaftaran p
         LEFT JOIN location l ON p.cabang = l.idl
         LEFT JOIN sponsor s ON p.sponsor = s.nik
-        WHERE p.nik = ?
+        WHERE LEFT(p.nik, 16) = LEFT(?, 16) AND p.status = 'aktive'
     ");
     $cek->bind_param("s", $nik);
     $cek->execute();
@@ -156,31 +184,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     $cek->close();
 
-    // DATA FORM
-    $nama              = trim($_POST['nama'] ?? '');
-    $namas             = trim($_POST['namas'] ?? '');
-    $tempat_lahir      = trim($_POST['tempat_lahir'] ?? '');
+    // DATA FORM (ALL CAPITAL SESUAI STANDAR)
+    $nama              = strtoupper(trim($_POST['nama'] ?? ''));
+    $namas             = strtoupper(trim($_POST['namas'] ?? ''));
+    $tempat_lahir      = strtoupper(trim($_POST['tempat_lahir'] ?? ''));
     $tanggal_lahir     = $_POST['tanggal_lahir'] ?? '';
-    $pendidikan        = trim($_POST['pendidikan'] ?? '');
-    $alamat            = trim($_POST['alamat'] ?? '');
-    $kelurahan         = trim($_POST['kelurahan'] ?? '');
-    $kecamatan         = trim($_POST['kecamatan'] ?? '');
-    $kabupaten         = trim($_POST['kabupaten'] ?? '');
+    $pendidikan        = strtoupper(trim($_POST['pendidikan'] ?? ''));
+    $alamat            = strtoupper(trim($_POST['alamat'] ?? ''));
+    $kodepos           = trim($_POST['kodepos'] ?? '');
+    $kelurahan         = strtoupper(trim($_POST['kelurahan'] ?? ''));
+    $kecamatan         = strtoupper(trim($_POST['kecamatan'] ?? ''));
+    $kabupaten         = strtoupper(trim($_POST['kabupaten'] ?? ''));
     $telp              = trim($_POST['telp'] ?? '');
     $status            = 'aktive';
-    $email             = trim($_POST['email'] ?? '');
-    $nama_ibu          = trim($_POST['nama_ibu'] ?? '');
-    $nama_ayah         = trim($_POST['nama_ayah'] ?? '');
-    $alamat_orang_tua  = trim($_POST['alamat_orang_tua'] ?? '');
+    $email             = strtolower(trim($_POST['email'] ?? ''));
+    $nama_ibu          = strtoupper(trim($_POST['nama_ibu'] ?? ''));
+    $nama_ayah         = strtoupper(trim($_POST['nama_ayah'] ?? ''));
+    $alamat_orang_tua  = strtoupper(trim($_POST['alamat_orang_tua'] ?? ''));
     $telp_ortu         = trim($_POST['telp_ortu'] ?? '');
-    $nama_ahli_waris   = trim($_POST['nama_ahli_waris'] ?? '');
-    $hubungan          = trim($_POST['hubungan'] ?? '');
-    $alamat_ahli_waris = trim($_POST['alamat_ahli_waris'] ?? '');
+    $nama_ahli_waris   = strtoupper(trim($_POST['nama_ahli_waris'] ?? ''));
+    $hubungan          = strtoupper(trim($_POST['hubungan'] ?? ''));
+    $alamat_ahli_waris = strtoupper(trim($_POST['alamat_ahli_waris'] ?? ''));
     $telp_ahli_waris   = trim($_POST['telp_ahli_waris'] ?? '');
-    $email_ahli_waris  = trim($_POST['email_ahli_waris'] ?? '');
-    $negara            = trim($_POST['negara'] ?? '');
-    $perkawinan        = trim($_POST['status_perkawinan'] ?? 'lajang');
+    $email_ahli_waris  = strtolower(trim($_POST['email_ahli_waris'] ?? ''));
+    $negara            = strtoupper(trim($_POST['negara'] ?? ''));
+    $perkawinan        = strtolower(trim($_POST['status_perkawinan'] ?? 'lajang'));
     $edit              = 'clouse';
+
+    // Pastikan kolom kodepos ada di tabel pendaftaran
+    $chkCol = $conn->query("SHOW COLUMNS FROM pendaftaran LIKE 'kodepos'");
+    if ($chkCol && $chkCol->num_rows === 0) {
+        $conn->query("ALTER TABLE pendaftaran ADD COLUMN kodepos VARCHAR(10) DEFAULT NULL AFTER kelurahan");
+    }
 
     // UPLOAD FILE
     $upload_dir = __DIR__ . '/pekerja/';
@@ -209,16 +244,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ftp_file = upload_file('ftp', 'perkawinan', $upload_dir);
     }
 
-    // SIMPAN KE DATABASE
+    // SIMPAN KE DATABASE (TERMASUK KODEPOS)
     $stmt = $conn->prepare("INSERT INTO pendaftaran 
-        (nik, nama, tempat_lahir, tanggal_lahir, pendidikan, alamat, kelurahan, kecamatan, kabupaten, telp, status, email, ft,
+        (nik, nama, tempat_lahir, tanggal_lahir, pendidikan, alamat, kodepos, kelurahan, kecamatan, kabupaten, telp, status, email, ft,
          nama_ibu, nama_ayah, alamat_orang_tua, telp_ortu, nama_ahli_waris, hubungan, alamat_ahli_waris, 
          telp_ahli_waris, email_ahli_waris, cabang, edit, negara, sponsor, tanggal_pendaftaran, ktp, kk, perkawinan, ftp, namas)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
 
     $stmt->bind_param(
-        str_repeat("s", 32),
-        $nik, $nama, $tempat_lahir, $tanggal_lahir, $pendidikan, $alamat, $kelurahan, $kecamatan, $kabupaten, $telp,
+        str_repeat("s", 33),
+        $nik, $nama, $tempat_lahir, $tanggal_lahir, $pendidikan, $alamat, $kodepos, $kelurahan, $kecamatan, $kabupaten, $telp,
         $status, $email, $ft,
         $nama_ibu, $nama_ayah, $alamat_orang_tua, $telp_ortu,
         $nama_ahli_waris, $hubungan, $alamat_ahli_waris, $telp_ahli_waris, $email_ahli_waris,
@@ -248,6 +283,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         .container { max-width: 800px; margin: 30px auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,.1); }
         label { font-weight: bold; margin-top: 10px; display: block; }
         input, textarea, select { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        input[type="text"], textarea { text-transform: uppercase; }
+        .kodepos-wrapper { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+        .kodepos-status { font-size: 13px; font-weight: bold; }
         input[type="submit"] { background: #28a745; color: white; border: none; margin-top: 15px; }
         input[type="submit"]:hover { background: #218838; cursor: pointer; }
         .home-icon1, .left-icon { position: absolute; top: 0; color: maroon; font-size: 24px; }
@@ -312,7 +350,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <input type="text" name="pendidikan" required>
 
         <label>Alamat</label>
-        <textarea name="alamat"></textarea>
+        <textarea name="alamat" required></textarea>
+
+        <label>Kode Pos <span style="font-size:12px; color:#0d6efd; font-weight:normal;"><i class="fa-solid fa-bolt"></i> Masukkan 5 digit kode pos untuk auto-fill Provinsi, Kab/Kota, Kecamatan & Kelurahan</span></label>
+        <div class="kodepos-wrapper">
+            <input type="text" name="kodepos" id="kodepos" maxlength="5" placeholder="Contoh: 50123" style="max-width:200px;">
+            <span id="kodepos_status" class="kodepos-status"></span>
+        </div>
 
         <label>Provinsi</label>
         <select id="select_prov" required style="width:100%; padding:10px; border-radius:5px; border:1px solid #ccc; margin-bottom:10px;">
@@ -458,6 +502,67 @@ $(document).ready(function(){
             $('#ftp, #lbl_ftp, #namas, #lbl_namas').show();
         }
     }).trigger('change');
+
+    // AUTO-FILL WILAYAH VIA API KODE POS
+    $('#kodepos').on('input', function() {
+        const kp = $(this).val().trim();
+        const statusEl = $('#kodepos_status');
+        
+        if (kp.length === 5) {
+            statusEl.html('<span style="color:#0d6efd;"><i class="fa-solid fa-spinner fa-spin"></i> Mencari wilayah...</span>');
+            
+            fetch(`https://kodepos.vercel.app/search/?q=${encodeURIComponent(kp)}`)
+                .then(r => r.json())
+                .then(res => {
+                    if (res && res.data && res.data.length > 0) {
+                        const items = res.data;
+                        const first = items[0];
+
+                        const provName = (first.province || '').toUpperCase();
+                        const kabName  = (first.regency || first.city || '').toUpperCase();
+                        const kecName  = (first.district || '').toUpperCase();
+
+                        // Set nilai hidden fields
+                        $('#provinsi').val(provName);
+                        $('#kabupaten').val(kabName);
+                        $('#kecamatan').val(kecName);
+
+                        // Update tampilan dropdown
+                        $('#select_prov').html(`<option value="${provName}" selected>${provName}</option>`);
+                        $('#select_kab').prop('disabled', false).html(`<option value="${kabName}" selected>${kabName}</option>`);
+                        $('#select_kec').prop('disabled', false).html(`<option value="${kecName}" selected>${kecName}</option>`);
+
+                        // Bangun opsi kelurahan jika ada lebih dari satu di kodepos tsb
+                        let kelOptions = '';
+                        items.forEach((item, idx) => {
+                            const vName = (item.village || item.subdistrict || '').toUpperCase();
+                            kelOptions += `<option value="${vName}" ${idx === 0 ? 'selected' : ''}>${vName}</option>`;
+                        });
+                        $('#select_kel').prop('disabled', false).html(kelOptions);
+                        $('#kelurahan').val($('#select_kel').val());
+
+                        statusEl.html('<span style="color:#198754;"><i class="fa-solid fa-circle-check"></i> ' + kecName + ', ' + kabName + '</span>');
+                    } else {
+                        statusEl.html('<span style="color:#dc3545;"><i class="fa-solid fa-circle-exclamation"></i> Tidak ditemukan. Silakan pilih manual di bawah.</span>');
+                    }
+                })
+                .catch(err => {
+                    console.error("Gagal cari kodepos:", err);
+                    statusEl.html('<span style="color:#dc3545;"><i class="fa-solid fa-triangle-exclamation"></i> Gagal koneksi API. Silakan pilih manual.</span>');
+                });
+        } else if (kp.length > 0 && kp.length < 5) {
+            statusEl.html('<span style="color:#6c757d;">(Ketik 5 digit)</span>');
+        } else {
+            statusEl.html('');
+        }
+    });
+
+    // AUTO UPPERCASE SAAT MENGETIK
+    $('input[type="text"], textarea').on('input', function() {
+        if (this.id !== 'kodepos' && this.id !== 'nik') {
+            this.value = this.value.toUpperCase();
+        }
+    });
 });
 
 // EMSIFA API WILAYAH HIERARCHY

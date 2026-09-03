@@ -294,13 +294,23 @@ button[type="button"]:hover {
              <input type="date" id="tanggal" name="tanggal" required>
             
             <select name="location" id="location" required>
-                <option value="" disabled selected>Pilih Cabang</option>
                 <?php
-              $sql2 = "SELECT idl, nama_cabang FROM location";
+                $sess_loc = intval($_SESSION['location'] ?? 1);
+                $user_cabang_name = '';
+                if ($sess_loc == 1) {
+                    echo '<option value="" disabled selected>Pilih Cabang</option>';
+                    $sql2 = "SELECT idl, nama_cabang FROM location ORDER BY idl ASC";
+                } else {
+                    $sql2 = "SELECT idl, nama_cabang FROM location WHERE idl = $sess_loc";
+                }
                 $result2 = $conn->query($sql2);
-                if ($result2->num_rows > 0) {
+                if ($result2 && $result2->num_rows > 0) {
                     while ($row = $result2->fetch_assoc()) {
-                        echo "<option value='{$row["idl"]}'>{$row["nama_cabang"]}</option>";
+                        $sel = ($sess_loc != 1 && $row["idl"] == $sess_loc) ? 'selected' : '';
+                        if ($row["idl"] == $sess_loc) {
+                            $user_cabang_name = trim($row["nama_cabang"]);
+                        }
+                        echo "<option value='{$row["idl"]}' $sel>{$row["nama_cabang"]}</option>";
                     }
                 } else {
                     echo "<option value='' disabled>Tidak ada cabang tersedia</option>";
@@ -351,13 +361,22 @@ button[type="button"]:hover {
                             <select name="coa[]" required onchange="updateAccountDetails(this)">
         <option value="">Pilih COA</option>
         <?php
+        $order_coa_bank = "account_code ASC";
+        if (!empty($user_cabang_name)) {
+            $safe_cn = $conn->real_escape_string($user_cabang_name);
+            $order_coa_bank = "CASE WHEN account_name LIKE '%$safe_cn%' THEN 0 ELSE 1 END, account_code ASC";
+        }
         $sql = "SELECT account_code, account_name 
         FROM coa 
-        WHERE layer = 4 AND account_code LIKE '112%'";
+        WHERE layer = 4 AND account_code LIKE '112%'
+        ORDER BY $order_coa_bank";
         $result = $conn->query($sql);
         if ($result->num_rows > 0) {
+            $auto_sel = true;
             while ($row = $result->fetch_assoc()) {
-                echo "<option value='{$row['account_code']}' data-name='{$row['account_name']}'>
+                $sel = ($sess_loc != 1 && $auto_sel && !empty($user_cabang_name) && stripos($row['account_name'], $user_cabang_name) !== false) ? 'selected' : '';
+                if ($sel) $auto_sel = false;
+                echo "<option value='{$row['account_code']}' data-name='{$row['account_name']}' $sel>
                         {$row['account_code']} - {$row['account_name']}
                       </option>";
             }
@@ -396,8 +415,8 @@ WHERE ( layer = 4
       SELECT COA
       FROM jenisbiaya
       WHERE status = '1' ) OR account_code LIKE '14101'
-  );
-";
+  )
+ORDER BY $order_coa_bank";
         $result = $conn->query($sql);
         if ($result->num_rows > 0) {
             while ($row = $result->fetch_assoc()) {
@@ -451,7 +470,7 @@ WHERE ( layer = 4
 <div style="display: flex; gap: 20px; flex-wrap: wrap;">
     <label>Biaya Bank: </label>
   <label><input type="checkbox" name="biaya_bank" value="2500" onchange="handleBiayaBankCheckbox(this)"> Rp 2.500</label>
-  <label><input type="checkbox" name="biaya_bank" value="6000" onchange="handleBiayaBankCheckbox(this)"> Rp 6.000</label>
+  <label><input type="checkbox" name="biaya_bank" value="6500" onchange="handleBiayaBankCheckbox(this)"> Rp 6.500</label>
   <label><input type="checkbox" name="biaya_bank" value="10000" onchange="handleBiayaBankCheckbox(this)"> Rp 10.000</label>
 </div>
 <br>

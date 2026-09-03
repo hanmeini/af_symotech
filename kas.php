@@ -297,15 +297,25 @@ try {
         <form id="formJurnal" action="save_jurnalkas.php" method="post" enctype="multipart/form-data">
             <label for="tanggal">Tanggal:</label><br>
              <input type="date" id="tanggal" name="tanggal" required>
-               <label for="location">Location:</label>
-               <select name="location" required>
-                <option value="" disabled selected>Pilih Lokasi</option>
+                <label for="location">Location:</label>
+                <select name="location" required>
                 <?php
-                $sql2 = "SELECT idl, nama_cabang FROM location";
+                $sess_loc = intval($_SESSION['location'] ?? 1);
+                $user_cabang_name = '';
+                if ($sess_loc == 1) {
+                    echo '<option value="" disabled selected>Pilih Lokasi</option>';
+                    $sql2 = "SELECT idl, nama_cabang FROM location ORDER BY idl ASC";
+                } else {
+                    $sql2 = "SELECT idl, nama_cabang FROM location WHERE idl = $sess_loc";
+                }
                 $result2 = $conn->query($sql2);
-                if ($result2->num_rows > 0) {
+                if ($result2 && $result2->num_rows > 0) {
                     while ($row = $result2->fetch_assoc()) {
-                        echo "<option value='{$row["idl"]}'>{$row["nama_cabang"]}</option>";
+                        $sel = ($sess_loc != 1 && $row["idl"] == $sess_loc) ? 'selected' : '';
+                        if ($row["idl"] == $sess_loc) {
+                            $user_cabang_name = trim($row["nama_cabang"]);
+                        }
+                        echo "<option value='{$row["idl"]}' $sel>{$row["nama_cabang"]}</option>";
                     }
                 } else {
                     echo "<option value='' disabled>Tidak ada cabang tersedia</option>";
@@ -343,13 +353,22 @@ try {
                              <select name="coa[]" required onchange="updateAccountDetails(this)">
         <option value="">Pilih COA</option>
         <?php
+        $order_coa_kas = "account_code ASC";
+        if (!empty($user_cabang_name)) {
+            $safe_cn = $conn->real_escape_string($user_cabang_name);
+            $order_coa_kas = "CASE WHEN account_name LIKE '%$safe_cn%' THEN 0 ELSE 1 END, account_code ASC";
+        }
         $sql = "SELECT account_code, account_name 
         FROM coa 
-        WHERE layer = 4 AND account_code LIKE '111%'";
+        WHERE layer = 4 AND account_code LIKE '111%'
+        ORDER BY $order_coa_kas";
         $result = $conn->query($sql);
         if ($result->num_rows > 0) {
+            $auto_sel = true;
             while ($row = $result->fetch_assoc()) {
-                echo "<option value='{$row['account_code']}' data-name='{$row['account_name']}'>
+                $sel = ($sess_loc != 1 && $auto_sel && !empty($user_cabang_name) && stripos($row['account_name'], $user_cabang_name) !== false) ? 'selected' : '';
+                if ($sel) $auto_sel = false;
+                echo "<option value='{$row['account_code']}' data-name='{$row['account_name']}' $sel>
                         {$row['account_code']} - {$row['account_name']}
                       </option>";
             }

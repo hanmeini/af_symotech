@@ -82,14 +82,20 @@ $q->close();
 // ==============================
 // COA & NAMA BIAYA
 // ==============================
+// ==============================
+// COA & NAMA BIAYA
+// ==============================
 $q2 = $conn->prepare("SELECT COA, namaby FROM jenisbiaya WHERE id=? LIMIT 1");
 $q2->bind_param("i", $dataNikby['kodeby']);
 $q2->execute();
 $jb = $q2->get_result()->fetch_assoc();
 $q2->close();
 
-$coa_biaya  = $jb['COA'];
-$nama_biaya = $jb['namaby'];
+$coa_biaya  = $jb['COA'] ?? '61001';
+$nama_biaya = $jb['namaby'] ?? 'Biaya Kesehatan';
+
+// DAFTAR COA UNTUK DROPDOWN
+$coaList = $conn->query("SELECT account_code, account_name FROM coa WHERE layer = 4 ORDER BY account_code ASC");
 
 // ==============================
 // AMBIL CABANG -> LOCATION
@@ -117,23 +123,27 @@ $kode_transaksi = "JM" . date('Y') . $nomor_formatted;
 
 
 // =====================================================
-// FORM KESEHATAN — BAGIAN INI DISAMAKAN DENGAN REFERENSI
+// FORM KESEHATAN
 // =====================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    $tanggal_kesehatan = $_POST['tanggal_kesehatan'] ?? '';
+    $tanggal_kesehatan = $_POST['tanggal_kesehatan'] ?? date('Y-m-d');
     $provider_serkes   = trim($_POST['provider_serkes'] ?? '');
     $no_serkes         = trim($_POST['no_serkes'] ?? '');
     $tgl_serkes        = $_POST['tgl_serkes'] ?? '';
     $tglend_serkes     = $_POST['tglend_serkes'] ?? '';
     $no_perjanjian     = trim($_POST['no_perjanjian'] ?? '');
     $status_kes        = $_POST['status_kes'] ?? '';
+    $selected_coa      = trim($_POST['coa_biaya'] ?? '');
+    if (!empty($selected_coa)) {
+        $coa_biaya = $selected_coa;
+    }
     $edit              = 'clouse';
 
     // Upload Wajib
     $serkes_file = upload_file('serkes', 'serkes', $upload_dir);
 
-    // Insert KESEHATAN (100% sama formatnya dengan script referensi)
+    // 1. Insert KESEHATAN
     $stmt = $conn->prepare("
         INSERT INTO kesehatan 
         (nik, provider_serkes, no_serkes, serkes, tgl_serkes, tglend_serkes,
@@ -148,14 +158,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     );
 
     if ($stmt->execute()) {
+        $stmt->close();
 
-        // UPDATE tanggal_kesehatan — SAMA dengan script referensi
+        // 2. UPDATE tanggal_kesehatan
         $update = $conn->prepare("UPDATE pendaftaran SET tanggal_kesehatan=? WHERE nik=?");
         $update->bind_param("ss", $tanggal_kesehatan, $nik);
         $update->execute();
         $update->close();
 
-        // CEK UNVIT
+        // 3. CEK UNVIT (BATALKAN STATUS PENDAFTARAN)
         if ($status_kes === 'unvit') {
             $upd_batal = $conn->prepare("UPDATE pendaftaran SET status='batal' WHERE nik=?");
             $upd_batal->bind_param("s", $nik);
@@ -163,75 +174,103 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $upd_batal->close();
         }
 
+        // 4. KHUSUS SINGAPURA & HONG KONG: LOLOS MEDIKAL (VIT) -> AUTO DAPAT JOB & UJIKOM
+        if ($status_kes === 'vit') {
+            $qNeg = $conn->prepare("SELECT negara FROM pendaftaran WHERE nik=? LIMIT 1");
+            $qNeg->bind_param("s", $nik);
+            $qNeg->execute();
+            $rNeg = $qNeg->get_result()->fetch_assoc();
+            $negaraTujuan = strtoupper(trim($rNeg['negara'] ?? ''));
+            $qNeg->close();
+
+            if (in_array($negaraTujuan, ['SINGAPURA', 'SINGAPORE', 'HONGKONG', 'HONG KONG'])) {
+                // Auto insert dapat_job jika belum ada
+                $qJob = $conn->prepare("SELECT id FROM dapat_job WHERE nik=? LIMIT 1");
+                $qJob->bind_param("s", $nik);
+                $qJob->execute();
+                if ($qJob->get_result()->num_rows === 0) {
+                    $insJob = $conn->prepare("INSERT INTO dapat_job (nik, tanggal_dapat_job, upload_job, jabatan, nama_mitra, edit) VALUES (?, ?, '-', 'HOUSEMAID / CAREGIVER', 'DIRECT HIRING', 'clouse')");
+                    $insJob->bind_param("ss", $nik, $tanggal_kesehatan);
+                    $insJob->execute();
+                    $insJob->close();
+
+                    $conn->query("UPDATE pendaftaran SET tanggal_saat_job='$tanggal_kesehatan' WHERE nik='$nik'");
+                }
+                $qJob->close();
+
+                // Auto insert ujikom jika belum ada
+                $qUji = $conn->prepare("SELECT id FROM ujikom WHERE nik=? LIMIT 1");
+                $qUji->bind_param("s", $nik);
+                $qUji->execute();
+                if ($qUji->get_result()->num_rows === 0) {
+                    $insUji = $conn->prepare("INSERT INTO ujikom (nik, ujikom, tgl_ujikom, tglend_ujikom, edit) VALUES (?, '-', ?, ?, 'clouse')");
+                    $insUji->bind_param("sss", $nik, $tanggal_kesehatan, $tglend_serkes);
+                    $insUji->execute();
+                    $insUji->close();
+
+                    $conn->query("UPDATE pendaftaran SET tanggal_ujikom='$tanggal_kesehatan' WHERE nik='$nik'");
+                }
+                $qUji->close();
+            }
+        }
+
+        // 5. JURNAL - Debet
+        $ket_baris = $nama_biaya . " - " . $nik;
+        $j1 = $conn->prepare("
+            INSERT INTO jurnal 
+            (journal_number, tanggal, keterangan, coa, debet, kredit, posting, location)
+            VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
+        ");
+        $j1->bind_param("sssdis", 
+            $kode_transaksi,
+            $tanggal_kesehatan,
+            $ket_baris,
+            $coa_biaya,
+            $nilaiNom,
+            $location
+        );
+        $j1->execute();
+        $j1->close();
+
+        // 6. JURNAL - Kredit (13102)
+        $j2 = $conn->prepare("
+            INSERT INTO jurnal 
+            (journal_number, tanggal, keterangan, coa, debet, kredit, posting, location)
+            VALUES (?, ?, ?, '13102', 0, ?, NULL, ?)
+        ");
+        $j2->bind_param("sssss",
+            $kode_transaksi,
+            $tanggal_kesehatan,
+            $ket_baris,
+            $nilaiNom,
+            $location
+        );
+        $j2->execute();
+        $j2->close();
+
+        // 7. UPDATE NIKBY → klaim
+        $up = $conn->prepare("UPDATE nikby SET klaim=? WHERE id=?");
+        $up->bind_param("si", $kode_transaksi, $dataNikby['id']);
+        $up->execute();
+        $up->close();
+
+        // 8. Simpan kode transaksi di tabel JM
+        $sql1 = "INSERT INTO JM (jurnal) VALUES (?)";
+        $stmtJM = $conn->prepare($sql1);
+        $stmtJM->bind_param("s", $kode_transaksi);
+        $stmtJM->execute();
+        $stmtJM->close();
+
         echo "<script>
-            alert('Data kesehatan & jurnal berhasil disimpan');
+            alert('Data kesehatan & jurnal memorial ($kode_transaksi) berhasil disimpan');
             window.location='detail_pekerja.php?nik=" . urlencode($nik) . "';
         </script>";
+        exit;
     } else {
         echo "<script>alert('Gagal menyimpan: " . $stmt->error . "');</script>";
+        $stmt->close();
     }
-
-    $stmt->close();
-    
-    
-// ==============================
-// JURNAL - Debet
-// ==============================
-$ket_baris = $nama_biaya . " - " . $nik;
-$ket_baris1 = $nama_biaya . " - " . $nik;
-
-$j1 = $conn->prepare("
-    INSERT INTO jurnal 
-    (journal_number, tanggal, keterangan, coa, debet, kredit, posting, location)
-    VALUES (?, ?, ?, ?, ?, 0, NULL, ?)
-");
-$j1->bind_param("sssdis", 
-    $kode_transaksi,
-    $tanggal_kesehatan,
-    $ket_baris,
-    $coa_biaya,
-    $nilaiNom,
-    $location
-);
-$j1->execute();
-$j1->close();
-
-// ==============================
-// JURNAL - Kredit (13102)
-// ==============================
-$j2 = $conn->prepare("
-    INSERT INTO jurnal 
-    (journal_number, tanggal, keterangan, coa, debet, kredit, posting, location)
-    VALUES (?, ?, ?, '13102', 0, ?, NULL, ?)
-");
-$j2->bind_param("sssss",
-    $kode_transaksi,
-    $tanggal_kesehatan,
-    $ket_baris1,
-    $nilaiNom,
-    $location
-);
-$j2->execute();
-$j2->close();
-
-// ==============================
-// UPDATE NIKBY → klaim
-// ==============================
-$up = $conn->prepare("UPDATE nikby SET klaim=? WHERE id=?");
-$up->bind_param("si", $kode_transaksi, $dataNikby['id']);
-$up->execute();
-$up->close();
 }
-
-// Simpan kode transaksi di tabel JM
-$sql1 = "INSERT INTO JM (jurnal) VALUES (?)";
-$stmt = $conn->prepare($sql1);
-$stmt->bind_param("s", $kode_transaksi);
-$stmt->execute();
-
-// Tutup statement dan koneksi
-$stmt->close();
-
 ?>
 
 <!DOCTYPE html>
@@ -246,8 +285,8 @@ body{font-family:Arial;background:#f0f0f0;padding:20px}
 .container{max-width:600px;background:#fff;padding:20px;margin:auto;border-radius:8px;box-shadow:0 0 10px rgba(0,0,0,0.1)}
 h2{text-align:center}
 label{display:block;margin-top:15px;font-weight:bold}
-input,select{width:100%;padding:8px;margin-top:5px;border-radius:4px;border:1px solid #ccc}
-input[type=submit]{background:#28a745;color:white;font-weight:bold;border:none;margin-top:20px;cursor:pointer}
+input,select{width:100%;padding:8px;margin-top:5px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
+input[type=submit]{background:#28a745;color:white;font-weight:bold;border:none;margin-top:20px;cursor:pointer;padding:10px}
 input[type=submit]:hover{background:#218838}
 .home-icon1,.left-icon{position:absolute;top:0;color:maroon;font-size:24px}
 .home-icon1{left:10px}
@@ -271,6 +310,17 @@ input[type=submit]:hover{background:#218838}
 
     <label>NIK</label>
     <input type="text" name="nik" value="<?= htmlspecialchars($nik) ?>" readonly>
+
+    <label>Akun Biaya (COA)</label>
+    <select name="coa_biaya" required>
+        <?php if ($coaList): ?>
+            <?php while ($c = $coaList->fetch_assoc()): ?>
+                <option value="<?= $c['account_code'] ?>" <?= ($c['account_code'] == $coa_biaya) ? 'selected' : '' ?>>
+                    <?= $c['account_code'] ?> - <?= htmlspecialchars($c['account_name']) ?>
+                </option>
+            <?php endwhile; ?>
+        <?php endif; ?>
+    </select>
 
     <label>Provider Serkes</label>
     <input type="text" name="provider_serkes" required>

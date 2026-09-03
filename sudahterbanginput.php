@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
 
         $nik_lama = $nik;
-        $nik_baru = $nik . 'T';
+        $nik_baru = $nik . 'D';
 
         $conn->begin_transaction();
         try {
@@ -93,7 +93,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->commit();
 
             echo "<script>
-                alert('Tanggal terbang disimpan & NIK berhasil ditandai T');
+                alert('Tanggal terbang disimpan & NIK berhasil ditandai D');
                 location='detail_pekerja.php?nik=" . urlencode($nik_baru) . "';
             </script>";
             exit;

@@ -133,6 +133,32 @@ while ($stmt3->fetch()) {
     $data_pending[] = compact('id', 'nik', 'nama', 'nama_cabang', 'negara', 'tanggal_kesehatan', 'umur', 'edit_val', 'minta_val');
 }
 $stmt3->close();
+
+// ---------- TABEL 4: Unvit (Batal) ----------
+$sql4 = "
+SELECT p.id, p.nik, p.nama, l.nama_cabang, p.negara, p.tanggal_kesehatan
+FROM pendaftaran p
+LEFT JOIN location l ON p.cabang = l.idl
+LEFT JOIN kesehatan k ON k.nik = p.nik
+WHERE (p.status = 'batal' OR k.status_kes = 'unvit')
+$filter
+ORDER BY p.tanggal_kesehatan DESC
+";
+$stmt4 = $conn->prepare($sql4);
+if ($types) $stmt4->bind_param($types, ...$params);
+$stmt4->execute();
+$stmt4->bind_result($id, $nik, $nama, $nama_cabang, $negara, $tanggal_kesehatan);
+
+$data_unvit = [];
+while ($stmt4->fetch()) {
+    $umur = ($tanggal_kesehatan && $tanggal_kesehatan !== '0000-00-00')
+        ? (new DateTime($tanggal_kesehatan))->diff(new DateTime())->days
+        : 0;
+    $edit_val = $editData[$nik]['edit'] ?? '';
+    $minta_val = $editData[$nik]['minta'] ?? 0;
+    $data_unvit[] = compact('id', 'nik', 'nama', 'nama_cabang', 'negara', 'tanggal_kesehatan', 'umur', 'edit_val', 'minta_val');
+}
+$stmt4->close();
 ?>
 
 <!DOCTYPE html>
@@ -140,6 +166,7 @@ $stmt3->close();
 <head>
     <meta charset="UTF-8">
     <title>Data TKI Kesehatan</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <style>
         body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px; }
         .container { max-width: 1200px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
@@ -189,7 +216,7 @@ $stmt3->close();
     </style>
 </head>
 <body>
-        <a href="home.php" class="home-btn">🏠</a>
+        <a href="home.php" class="home-btn"><i class="fa-solid fa-arrow-left"></i> Kembali ke Menu</a>
 <div class="container">
     <h2>Data TKI Aktif & Kesehatan</h2>
 
@@ -293,6 +320,44 @@ $stmt3->close();
                 </td>
             </tr>
         <?php endforeach; ?>
+        </tbody>
+    </table>
+
+    <h3 style="color:#dc3545; margin-top:40px;"><i class="fa-solid fa-ban"></i> Calon Pekerja Unvit (Batal)</h3>
+    <table>
+        <thead style="background:#dc3545;">
+        <tr>
+            <th>ID</th>
+            <th>NIK</th>
+            <th>Nama</th>
+            <th>Cabang</th>
+            <th>Negara</th>
+            <th>Tanggal Kesehatan</th>
+            <th>Umur (Hari)</th>
+            <th>Status</th>
+            <th>Aksi</th>
+        </tr>
+        </thead>
+        <tbody>
+        <?php if (empty($data_unvit)): ?>
+            <tr><td colspan="9" style="text-align:center; color:#6c757d;">Tidak ada data pekerja unvit.</td></tr>
+        <?php else: ?>
+            <?php foreach ($data_unvit as $row): ?>
+                <tr>
+                    <td><?= $row['id'] ?></td>
+                    <td><?= htmlspecialchars($row['nik'] ?? '') ?></td>
+                    <td><?= htmlspecialchars($row['nama'] ?? '') ?></td>
+                    <td><?= htmlspecialchars($row['nama_cabang'] ?? '') ?></td>
+                    <td><?= htmlspecialchars($row['negara'] ?? '') ?></td>
+                    <td><?= $row['tanggal_kesehatan'] ?></td>
+                    <td><?= $row['umur'] ?> hari</td>
+                    <td><span style="background:#dc3545; color:#fff; font-size:12px; font-weight:bold; padding:3px 6px; border-radius:4px;">BATAL (UNFIT)</span></td>
+                    <td>
+                        <a class="btn-reqedit" style="background:#6c757d;" href="detail_pekerja.php?nik=<?= urlencode($row['nik']) ?>">Detail</a>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+        <?php endif; ?>
         </tbody>
     </table>
 </div>

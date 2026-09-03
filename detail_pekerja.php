@@ -42,10 +42,18 @@ function fileButton($filename, $label = 'Lihat File') {
 }
 
 // ---------------------------
-// 1) Data pendaftaran (utama)
-// ---------------------------
+// Pastikan kolom kodepos & namas ada di pendaftaran
+$chkCol = $conn->query("SHOW COLUMNS FROM pendaftaran LIKE 'kodepos'");
+if ($chkCol && $chkCol->num_rows === 0) {
+    $conn->query("ALTER TABLE pendaftaran ADD COLUMN kodepos VARCHAR(10) DEFAULT NULL AFTER kelurahan");
+}
+$chkNamas = $conn->query("SHOW COLUMNS FROM pendaftaran LIKE 'namas'");
+if ($chkNamas && $chkNamas->num_rows === 0) {
+    $conn->query("ALTER TABLE pendaftaran ADD COLUMN namas VARCHAR(100) DEFAULT NULL AFTER perkawinan");
+}
+
 $sql = "
-SELECT p.nik, p.nama, p.perkawinan, p.tempat_lahir, p.tanggal_lahir, p.Pendidikan, p.alamat, p.kelurahan, p.kecamatan, p.kabupaten,
+SELECT p.nik, p.nama, p.perkawinan, p.namas, p.tempat_lahir, p.tanggal_lahir, p.Pendidikan, p.alamat, p.kodepos, p.kelurahan, p.kecamatan, p.kabupaten,
        p.telp, p.email, p.status, p.ft, p.ktp, p.kk, p.ftp, p.nama_ibu, p.nama_ayah, p.alamat_orang_tua, p.telp_ortu,
        p.nama_ahli_waris, p.hubungan, p.alamat_ahli_waris, p.telp_ahli_waris, p.email_ahli_waris,
        p.negara, p.tanggal_pendaftaran, p.tanggal_kesehatan, p.tanggal_saat_job, p.tanggal_pembuatan_pasport,
@@ -61,7 +69,7 @@ $stmt = $conn->prepare($sql);
 $stmt->bind_param('s', $nik);
 $stmt->execute();
 $stmt->bind_result(
-    $db_nik, $db_nama, $db_perkawinan, $db_tempat_lahir, $db_tanggal_lahir, $db_pendidikan, $db_alamat, $db_kelurahan, $db_kecamatan, $db_kabupaten,
+    $db_nik, $db_nama, $db_perkawinan, $db_namas, $db_tempat_lahir, $db_tanggal_lahir, $db_pendidikan, $db_alamat, $db_kodepos, $db_kelurahan, $db_kecamatan, $db_kabupaten,
     $db_telp, $db_email, $db_status, $db_ft, $db_ktp, $db_kk, $db_ftp, $db_nama_ibu, $db_nama_ayah, $db_alamat_orang_tua, $db_telp_ortu,
     $db_nama_ahli_waris, $db_hubungan, $db_alamat_ahli_waris, $db_telp_ahli_waris, $db_email_ahli_waris,
     $db_negara, $db_tanggal_pendaftaran, $db_tanggal_kesehatan, $db_tanggal_saat_job, $db_tanggal_pembuatan_pasport,
@@ -197,6 +205,51 @@ if ($stmt->fetch()) {
 }
 $stmt->close();
 
+// ---------------------------
+// 11) TETO - terakhir
+// ---------------------------
+$teto = null;
+$stmt = $conn->prepare("SELECT nama_dokumen, nomor_dokumen, file_dokumen, tanggal_teto FROM teto WHERE nik = ? ORDER BY id DESC LIMIT 1");
+if ($stmt) {
+    $stmt->bind_param('s', $nik);
+    $stmt->execute();
+    $stmt->bind_result($t_nama, $t_no, $t_file, $t_tgl);
+    if ($stmt->fetch()) {
+        $teto = compact('t_nama', 't_no', 't_file', 't_tgl');
+    }
+    $stmt->close();
+}
+
+// ---------------------------
+// 12) SUHAN - terakhir
+// ---------------------------
+$suhan = null;
+$stmt = $conn->prepare("SELECT nomor_dokumen, file_dokumen, tanggal_suhan FROM suhan WHERE nik = ? ORDER BY id DESC LIMIT 1");
+if ($stmt) {
+    $stmt->bind_param('s', $nik);
+    $stmt->execute();
+    $stmt->bind_result($su_no, $su_file, $su_tgl);
+    if ($stmt->fetch()) {
+        $suhan = compact('su_no', 'su_file', 'su_tgl');
+    }
+    $stmt->close();
+}
+
+// ---------------------------
+// 13) OPP / E-KTKLN - terakhir
+// ---------------------------
+$opp = null;
+$stmt = $conn->prepare("SELECT nomor_kartu, nama_dokumen, file_dokumen, tanggal_opp FROM opp WHERE nik = ? ORDER BY id DESC LIMIT 1");
+if ($stmt) {
+    $stmt->bind_param('s', $nik);
+    $stmt->execute();
+    $stmt->bind_result($o_no, $o_nama, $o_file, $o_tgl);
+    if ($stmt->fetch()) {
+        $opp = compact('o_no', 'o_nama', 'o_file', 'o_tgl');
+    }
+    $stmt->close();
+}
+
 $conn->close();
 
 ?>
@@ -207,6 +260,7 @@ $conn->close();
 <meta charset="utf-8">
 <title>Detail Pendaftaran - <?= h($db_nama) ?></title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <style>
     body { font-family: Arial, sans-serif; background:#f4f4f4; margin:0; padding:20px; }
     .wrap { max-width:1100px; margin:0 auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,.08); }
@@ -228,8 +282,16 @@ $conn->close();
 </head>
 <body>
 <div class="wrap">
-    <a href="home.php" class="back">🏠 Kembali</a>
-    <h1>Detail TKI — <?= h($db_nama) ?> (<?= h($db_nik) ?>)</h1>
+    <a href="home.php" class="back"><i class="fa-solid fa-arrow-left"></i> Kembali</a>
+    <h1>Detail TKI — <?= h($db_nama) ?> (<?= h($db_nik) ?>)
+        <?php if ($db_status === 'batal'): ?>
+            <span style="background:#dc3545; color:#fff; font-size:15px; padding:3px 10px; border-radius:4px; vertical-align:middle; font-weight:normal;"><i class="fa-solid fa-ban"></i> BATAL (UNFIT)</span>
+        <?php elseif ($db_status === 'aktive'): ?>
+            <span style="background:#198754; color:#fff; font-size:15px; padding:3px 10px; border-radius:4px; vertical-align:middle; font-weight:normal;"><i class="fa-solid fa-circle-check"></i> AKTIF</span>
+        <?php else: ?>
+            <span style="background:#6c757d; color:#fff; font-size:15px; padding:3px 10px; border-radius:4px; vertical-align:middle; font-weight:normal;"><?= strtoupper(h($db_status)) ?></span>
+        <?php endif; ?>
+    </h1>
 
     <!-- 1) Pendaftaran -->
     <div class="section">
@@ -241,8 +303,12 @@ $conn->close();
                     <tr><td class="label">Nama</td><td><?= h($db_nama) ?></td></tr>
                     <tr><td class="label">Tempat, Tgl Lahir</td><td><?= h($db_tempat_lahir) ?>, <?= h($db_tanggal_lahir) ?></td></tr>
                     <tr><td class="label">Pendidikan</td><td><?= h($db_pendidikan) ?></td></tr>
-                    <tr><td class="label">Perkawinan</td><td><?= h($db_perkawinan) ?></td></tr>
+                    <tr><td class="label">Perkawinan</td><td><?= h(strtoupper($db_perkawinan)) ?></td></tr>
+                    <?php if (!empty($db_namas)): ?>
+                    <tr><td class="label">Nama Pasangan</td><td><?= h($db_namas) ?></td></tr>
+                    <?php endif; ?>
                     <tr><td class="label">Alamat</td><td><?= h($db_alamat) ?></td></tr>
+                    <tr><td class="label">Kode Pos</td><td><?= h($db_kodepos ?: '-') ?></td></tr>
                     <tr><td class="label">Kel/Kec/Kab</td><td><?= h($db_kelurahan) ?> / <?= h($db_kecamatan) ?> / <?= h($db_kabupaten) ?></td></tr>
                     <tr><td class="label">Telp</td><td><?= h($db_telp) ?></td></tr>
                     <tr><td class="label">Email</td><td><?= h($db_email) ?></td></tr>
@@ -425,6 +491,50 @@ $conn->close();
             </table>
         <?php else: ?>
             <p class="note">Belum ada data Kesehatan FULL.</p>
+        <?php endif; ?>
+    </div>
+
+    <!-- 11) TETO -->
+    <div class="section">
+        <h2>Dokumen TETO</h2>
+        <?php if ($teto): ?>
+            <table>
+                <tr><td class="label">Tanggal TETO</td><td><?= h($teto['t_tgl']) ?></td></tr>
+                <tr><td class="label">Nama Dokumen</td><td><?= h($teto['t_nama']) ?></td></tr>
+                <tr><td class="label">Nomor Dokumen</td><td><?= h($teto['t_no'] ?: '-') ?></td></tr>
+                <tr><td class="label">File Dokumen</td><td><?= fileButton($teto['t_file'], 'Lihat Dokumen TETO') ?></td></tr>
+            </table>
+        <?php else: ?>
+            <p class="note">Belum ada data Dokumen TETO.</p>
+        <?php endif; ?>
+    </div>
+
+    <!-- 12) SUHAN -->
+    <div class="section">
+        <h2>Dokumen SUHAN</h2>
+        <?php if ($suhan): ?>
+            <table>
+                <tr><td class="label">Tanggal SUHAN</td><td><?= h($suhan['su_tgl']) ?></td></tr>
+                <tr><td class="label">Nomor Dokumen</td><td><?= h($suhan['su_no'] ?: '-') ?></td></tr>
+                <tr><td class="label">File SUHAN</td><td><?= fileButton($suhan['su_file'], 'Lihat Dokumen SUHAN') ?></td></tr>
+            </table>
+        <?php else: ?>
+            <p class="note">Belum ada data Dokumen SUHAN.</p>
+        <?php endif; ?>
+    </div>
+
+    <!-- 13) OPP / E-KTKLN -->
+    <div class="section">
+        <h2>OPP / E-KTKLN</h2>
+        <?php if ($opp): ?>
+            <table>
+                <tr><td class="label">Tanggal OPP</td><td><?= h($opp['o_tgl']) ?></td></tr>
+                <tr><td class="label">Nomor Kartu</td><td><?= h($opp['o_no']) ?></td></tr>
+                <tr><td class="label">Nama Dokumen</td><td><?= h($opp['o_nama']) ?></td></tr>
+                <tr><td class="label">File KTKLN</td><td><?= fileButton($opp['o_file'], 'Lihat Dokumen KTKLN') ?></td></tr>
+            </table>
+        <?php else: ?>
+            <p class="note">Belum ada data OPP / E-KTKLN.</p>
         <?php endif; ?>
     </div>
 

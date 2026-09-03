@@ -135,6 +135,7 @@ $stmt->close();
 <head>
     <meta charset="UTF-8">
     <title>Data TKI</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <style>
         body { font-family: Arial, sans-serif; background: #f4f4f4; padding: 20px; }
         .container { max-width: 1100px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,.1); }
@@ -156,6 +157,7 @@ $stmt->close();
         .btn-gray { background: #6c757d; color: white; }
         .status-aktive { color: green; font-weight: bold; }
         .status-nonaktive { color: red; font-weight: bold; }
+        .status-batal { background: #dc3545; color: white; font-weight: bold; padding: 3px 8px; border-radius: 4px; display: inline-block; font-size: 12px; }
         .home-btn { display: inline-block; margin-bottom: 20px; padding: 10px 20px; background: #3498db; color: white; text-decoration: none; border-radius: 5px; }
         
         td .btn {
@@ -177,7 +179,7 @@ td {
     </style>
 </head>
 <body>
-    <a href="home.php" class="home-btn">🏠</a>
+    <a href="home.php" class="home-btn"><i class="fa-solid fa-arrow-left"></i> Kembali ke Menu</a>
 <div class="container">
     <h2>Data TKI Terdaftar</h2>
 
@@ -218,7 +220,13 @@ td {
                     <td><?= htmlspecialchars($row['cabang']) ?></td>
                    <td><?= htmlspecialchars($row['negara'] ?? '') ?></td>
                     <td class="status-<?= $row['status'] ?>">
-                        <?= $row['status'] === 'aktive' ? '<span class="status-aktive">Aktif</span>' : '<span class="status-nonaktive">Nonaktif</span>' ?>
+                        <?php if ($row['status'] === 'aktive'): ?>
+                            <span class="status-aktive">Aktif</span>
+                        <?php elseif ($row['status'] === 'batal'): ?>
+                            <span class="status-batal">BATAL (UNFIT)</span>
+                        <?php else: ?>
+                            <span class="status-nonaktive">Nonaktif</span>
+                        <?php endif; ?>
                     </td>
                   
                     <td><?= $row['tanggal'] ?></td>
