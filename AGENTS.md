@@ -195,6 +195,8 @@ flowchart TD
    - Perhitungan tarif komisi sponsor berdasarkan master tarif per negara tujuan (`tariffee`).
 4. **Akuntansi Umum:** Master COA (`coa.php`), Jurnal (`jurnal.php`), Buku Besar (`ledger.php`), Neraca Saldo (`ns2.php`), Laba Rugi (`lr.php`, `lr2.php`), dan Tutup Buku Periode (`closing.php`).
 
+*Daftar audit lengkap, backlog prioritas, dan catatan perbaikan modul akuntansi tersedia di [CATATAN_AUDIT_AKUNTANSI_DAN_BACKLOG.md](CATATAN_AUDIT_AKUNTANSI_DAN_BACKLOG.md).*
+
 ---
 
 ## Sistem Approval Izin Edit Data (Anti-Fraud Cabang)
