@@ -28,11 +28,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     // Jalankan git fetch & reset di server cPanel untuk overwrite untracked files
-    set_time_limit(120);
-    echo "--- Menjalankan git fetch & reset di cPanel (af.symotech.id) ---\n";
-    $output = shell_exec("git fetch origin main 2>&1 && git checkout -B main origin/main 2>&1 && git reset --hard origin/main 2>&1");
-    echo $output ?: "Command tidak menghasilkan output (pastikan Git terinstall & diizinkan di cPanel).";
-    echo "\n\n--- Status commit terbaru setelah update ---\n";
+    set_time_limit(180);
+    putenv('GIT_TERMINAL_PROMPT=0');
+    echo "--- Menjalankan Git Deploy di cPanel (af.symotech.id) ---\n";
+    
+    // Pastikan remote origin terarah dengan benar
+    shell_exec("git remote set-url origin https://github.com/hanmeini/af_symotech.git 2>&1 || git remote add origin https://github.com/hanmeini/af_symotech.git 2>&1");
+    
+    // Step 1: Fetch
+    $fetch_out = shell_exec("git fetch origin main 2>&1");
+    echo "1. Git Fetch:\n" . ($fetch_out ? trim($fetch_out) : "Selesai tanpa output") . "\n\n";
+
+    // Step 2: Checkout / Switch ke branch main
+    $checkout_out = shell_exec("git checkout -B main origin/main 2>&1 || git checkout main 2>&1");
+    echo "2. Git Checkout:\n" . ($checkout_out ? trim($checkout_out) : "Selesai tanpa output") . "\n\n";
+
+    // Step 3: Hard reset ke origin/main
+    $reset_out = shell_exec("git reset --hard origin/main 2>&1");
+    echo "3. Git Reset:\n" . ($reset_out ? trim($reset_out) : "Selesai tanpa output") . "\n\n";
+
+    echo "--- Status commit terbaru setelah update ---\n";
     echo shell_exec("git log -n 1 --oneline 2>&1");
     exit();
 }
