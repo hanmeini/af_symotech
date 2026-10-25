@@ -35,16 +35,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     // Pastikan remote origin terarah dengan benar
     shell_exec("git remote set-url origin https://github.com/hanmeini/af_symotech.git 2>&1 || git remote add origin https://github.com/hanmeini/af_symotech.git 2>&1");
     
-    // Step 1: Fetch
-    $fetch_out = shell_exec("git fetch origin main 2>&1");
+    // Step 1: Fetch all remote branches
+    $fetch_out = shell_exec("git fetch origin master 2>&1 || git fetch origin main 2>&1 || git fetch origin 2>&1");
     echo "1. Git Fetch:\n" . ($fetch_out ? trim($fetch_out) : "Selesai tanpa output") . "\n\n";
 
-    // Step 2: Checkout / Switch ke branch main
-    $checkout_out = shell_exec("git checkout -B main origin/main 2>&1 || git checkout main 2>&1");
+    // Step 2: Checkout / Switch ke branch master atau main
+    $checkout_out = shell_exec("git checkout -B master origin/master 2>&1 || git checkout -B main origin/main 2>&1 || git checkout master 2>&1 || git checkout main 2>&1");
     echo "2. Git Checkout:\n" . ($checkout_out ? trim($checkout_out) : "Selesai tanpa output") . "\n\n";
 
-    // Step 3: Hard reset ke origin/main
-    $reset_out = shell_exec("git reset --hard origin/main 2>&1");
+    // Step 3: Hard reset ke remote
+    $reset_out = shell_exec("git reset --hard origin/master 2>&1 || git reset --hard origin/main 2>&1");
     echo "3. Git Reset:\n" . ($reset_out ? trim($reset_out) : "Selesai tanpa output") . "\n\n";
 
     echo "--- Status commit terbaru setelah update ---\n";
