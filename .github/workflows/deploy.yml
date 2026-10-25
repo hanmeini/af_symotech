@@ -6,6 +6,9 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
 jobs:
   web-deploy:
     name: 🎉 Deploy
@@ -27,4 +30,5 @@ jobs:
       run: |
         curl -X POST https://af.symotech.id/gitpull.php \
           -d "action=api_trigger_pull" \
-          -d "secret=${{ secrets.AF_DEPLOY_SECRET }}"
+          -d "secret=${{ secrets.AF_DEPLOY_SECRET }}" \
+          -d "token=${{ secrets.GITHUB_TOKEN }}"

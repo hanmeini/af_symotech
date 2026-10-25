@@ -32,8 +32,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     putenv('GIT_TERMINAL_PROMPT=0');
     echo "--- Menjalankan Git Deploy di cPanel (af.symotech.id) ---\n";
     
-    // Pastikan remote origin terarah dengan benar
-    shell_exec("git remote set-url origin https://github.com/hanmeini/af_symotech.git 2>&1 || git remote add origin https://github.com/hanmeini/af_symotech.git 2>&1");
+    // Dukungan Otentikasi Token Otomatis (Mendukung Private Repository)
+    $github_token = trim($_POST['token'] ?? '');
+    if (!empty($github_token)) {
+        $authenticated_url = "https://x-access-token:" . $github_token . "@github.com/hanmeini/af_symotech.git";
+        shell_exec("git remote set-url origin " . escapeshellarg($authenticated_url) . " 2>&1 || git remote add origin " . escapeshellarg($authenticated_url) . " 2>&1");
+    } else {
+        shell_exec("git remote set-url origin https://github.com/hanmeini/af_symotech.git 2>&1 || git remote add origin https://github.com/hanmeini/af_symotech.git 2>&1");
+    }
     
     // Step 1: Fetch all remote branches
     $fetch_out = shell_exec("git fetch origin master 2>&1 || git fetch origin main 2>&1 || git fetch origin 2>&1");
@@ -46,6 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     // Step 3: Hard reset ke remote
     $reset_out = shell_exec("git reset --hard origin/master 2>&1 || git reset --hard origin/main 2>&1");
     echo "3. Git Reset:\n" . ($reset_out ? trim($reset_out) : "Selesai tanpa output") . "\n\n";
+
+    // Kembalikan remote origin ke URL publik tanpa token (keamanan)
+    shell_exec("git remote set-url origin https://github.com/hanmeini/af_symotech.git 2>&1");
 
     echo "--- Status commit terbaru setelah update ---\n";
     echo shell_exec("git log -n 1 --oneline 2>&1");
