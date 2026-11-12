@@ -31,6 +31,7 @@ ini_set('display_errors', 1);
 // Autoload dan konfigurasi
 require 'vendor/autoload.php';
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -77,10 +78,12 @@ $headers = ['No', 'Kode', 'Nama', 'Tanggal Perolehan', 'Harga Perolehan', 'Nilai
 $sheet->fromArray($headers, null, 'A3');
 
 // Ambil data aset (tanpa get_result)
-$sql = "SELECT kode, nama, tanggal, beli FROM aset WHERE kode LIKE ? OR nama LIKE ? ORDER BY kode ASC";
+ensureAsetKelompokDelSchema($conn);
+$sql = "SELECT kode, nama, tanggal, beli FROM aset WHERE (kode LIKE ? OR nama LIKE ?) AND (del IS NULL OR del >= ?) ORDER BY kode ASC";
 $stmt = $conn->prepare($sql);
 $like_cari = "%$cari%";
-$stmt->bind_param("ss", $like_cari, $like_cari);
+$tahun_int = (int)$tahun;
+$stmt->bind_param("ssi", $like_cari, $like_cari, $tahun_int);
 $stmt->execute();
 $stmt->bind_result($kode, $nama, $tanggal, $beli);
 

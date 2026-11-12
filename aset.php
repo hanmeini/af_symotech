@@ -1,394 +1,1240 @@
+
 <?php
+// ============================================================
+// DAFTAR ASET - AF_SYMOTECH
+// Filter Tahun + Subtotal Kelompok + Penyusutan
+// ============================================================
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
 
-session_start([
-    'cookie_lifetime' => 86400, // Cookie berlaku selama 1 hari (86400 detik)
-    'cookie_httponly' => true, // Cookie hanya dapat diakses melalui HTTP (JavaScript tidak bisa membaca)
-    'cookie_secure' => isset($_SERVER['HTTPS']), // Cookie hanya dikirim melalui HTTPS jika tersedia
-    'use_only_cookies' => true, // Hanya gunakan cookie untuk session (tanpa URL session ID)
-    'use_strict_mode' => true, // Cegah sesi yang dicuri digunakan kembali
-]);
-$allowed_referer_domain = "https://af.symotech.id/";
+date_default_timezone_set('Asia/Jakarta');
 
-// Periksa apakah HTTP_REFERER ada dan berasal dari domain yang diizinkan
-if (false /* referer bypassed */) {
-    header("Location: https://af.symotech.id");
-    exit();
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start([
+        'cookie_lifetime' => 86400,
+        'cookie_httponly' => true,
+        'cookie_secure' => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+        'use_only_cookies' => true,
+        'use_strict_mode' => true
+    ]);
 }
 
-// Periksa apakah pengguna sudah login
 if (!isset($_SESSION['username'])) {
     header("Location: index.html");
     exit();
 }
 
-// Load konfigurasi dari config.php
-require_once 'config.php';
+require_once __DIR__ . '/config.php';
 
+// ============================================================
+// DATABASE
+// ============================================================
 
+$servername = getenv('DB_HOST') ?: '';
+$db_username = getenv('DB_USER') ?: '';
+$db_password = function_exists('get_db_pass') ? get_db_pass() : (getenv('DB_PASS') !== false ? getenv('DB_PASS') : '');
+$database = getenv('DB_NAME') ?: '';
 
-// Ambil variabel dari environment
-$servername = getenv('DB_HOST') ?: die("Kesalahan: DB_HOST tidak ditemukan.");
-$db_username = getenv('DB_USER') ?: die("Kesalahan: DB_USER tidak ditemukan.");
-$db_password = getenv('DB_PASS');
-$database = getenv('DB_NAME') ?: die("Kesalahan: DB_NAME tidak ditemukan.");
-
-
-// Buat koneksi ke database pertama
-$conn = new mysqli($servername, $db_username, $db_password, $database);
-
-// Periksa koneksi pertama
-if ($conn->connect_error) {
-    die("Koneksi ke database pertama gagal: " . $conn->connect_error);
+if (!$servername || !$db_username || !$database) {
+    die("Konfigurasi database tidak lengkap.");
 }
 
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
+try {
+    $conn = new mysqli(
+        $servername,
+        $db_username,
+        $db_password,
+        $database
+    );
+
+    $conn->set_charset('utf8mb4');
+    require_once __DIR__ . '/aset_helper.php';
+    ensureAsetKelompokDelSchema($conn);
+
+} catch (Throwable $e) {
+    error_log($e->getMessage());
+    die("Koneksi database gagal.");
+}
+
+// ============================================================
+// HELPER
+// ============================================================
+
+function h($value)
+{
+    return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+function rupiah($value)
+{
+    return number_format((float)$value, 2, ',', '.');
+}
+
+function tanggalIndo($tanggal)
+{
+    if (!$tanggal || $tanggal === '0000-00-00') {
+        return '-';
+    }
+
+    return date('d/m/Y', strtotime($tanggal));
+}
+
+// ============================================================
+// KELOMPOK
+// ============================================================
+
+$kelompokList = [
+    'Tanah',
+    'Kelompok 1',
+    'Kelompok 2',
+    'Kelompok 3',
+    'Kelompok 4',
+    'Bangunan Permanen',
+    'Bangunan Tidak Permanen'
+];
+
+// ============================================================
+// TAHUN TERAKHIR DATA
+// ============================================================
+
+$sqlTahun = "
+    SELECT MAX(tahun) AS tahun_terakhir
+    FROM (
+        SELECT YEAR(tanggal) AS tahun
+        FROM aset
+        WHERE tanggal IS NOT NULL
+
+        UNION ALL
+
+        SELECT YEAR(tanggal) AS tahun
+        FROM susut
+        WHERE tanggal IS NOT NULL
+
+        UNION ALL
+
+        SELECT CAST(del AS UNSIGNED) AS tahun
+        FROM aset
+        WHERE del IS NOT NULL
+    ) AS data_tahun
+";
+
+$resultTahun = $conn->query($sqlTahun);
+$rowTahun = $resultTahun->fetch_assoc();
+
+$tahunTerakhir = (int)($rowTahun['tahun_terakhir'] ?? date('Y'));
+
+if ($tahunTerakhir <= 0) {
+    $tahunTerakhir = (int)date('Y');
+}
+
+// ============================================================
+// RANGE TAHUN
+// ============================================================
+
+$sqlRange = "
+    SELECT
+        MIN(tahun) AS tahun_awal,
+        MAX(tahun) AS tahun_akhir
+    FROM (
+        SELECT YEAR(tanggal) AS tahun
+        FROM aset
+        WHERE tanggal IS NOT NULL
+
+        UNION ALL
+
+        SELECT YEAR(tanggal) AS tahun
+        FROM susut
+        WHERE tanggal IS NOT NULL
+    ) AS x
+";
+
+$resultRange = $conn->query($sqlRange);
+$range = $resultRange->fetch_assoc();
+
+$tahunAwal = (int)($range['tahun_awal'] ?? $tahunTerakhir);
+$tahunAkhir = max(
+    $tahunTerakhir,
+    (int)($range['tahun_akhir'] ?? $tahunTerakhir)
+);
+
+if ($tahunAwal <= 0) {
+    $tahunAwal = $tahunTerakhir;
+}
+
+// ============================================================
+// FILTER TAHUN
+// ============================================================
+
+$tahun = isset($_GET['tahun']) ? (int)$_GET['tahun'] : $tahunTerakhir;
+
+if ($tahun < 1900 || $tahun > 2155) {
+    $tahun = $tahunTerakhir;
+}
+
+$tanggalMulai = sprintf('%04d-01-01', $tahun);
+$tanggalAkhir = sprintf('%04d-01-01', $tahun + 1);
+
+// ============================================================
+// QUERY ASET
+//
+// ATURAN DEL:
+// del NULL = selalu tampil
+// del = 2025, laporan 2025 = tampil
+// del = 2025, laporan 2026 = tidak tampil
+// del = 2026, laporan 2025 = tampil
+//
+// KONDISI:
+// a.del IS NULL OR a.del >= tahun laporan
+// ============================================================
+
+$sql = "
+    SELECT
+        a.id,
+        a.kode,
+        a.nama,
+        a.tanggal,
+        a.beli,
+        a.location,
+        a.recuring,
+        a.keteranganlok,
+        a.kelompok,
+        a.del,
+
+        l.nama_cabang,
+
+        COALESCE(s.akum_susut, 0) AS akum_susut,
+        COALESCE(s.susut_tahun_ini, 0) AS susut_tahun_ini
+
+    FROM aset a
+
+    LEFT JOIN location l
+        ON a.location = l.idl
+
+    LEFT JOIN (
+        SELECT
+            kode,
+
+            SUM(COALESCE(susut, 0)) AS akum_susut,
+
+            SUM(
+                CASE
+                    WHEN tanggal >= ?
+                     AND tanggal < ?
+                    THEN COALESCE(susut, 0)
+                    ELSE 0
+                END
+            ) AS susut_tahun_ini
+
+        FROM susut
+
+        WHERE tanggal < ?
+
+        GROUP BY kode
+
+    ) s ON s.kode = a.kode
+
+    WHERE
+        a.tanggal < ?
+
+        AND (
+            a.del IS NULL
+            OR a.del >= ?
+        )
+
+    ORDER BY
+        FIELD(
+            a.kelompok,
+            'Tanah',
+            'Kelompok 1',
+            'Kelompok 2',
+            'Kelompok 3',
+            'Kelompok 4',
+            'Bangunan Permanen',
+            'Bangunan Tidak Permanen'
+        ),
+        a.id ASC
+";
+
+$stmt = $conn->prepare($sql);
+
+$stmt->bind_param(
+    "sssss",
+    $tanggalMulai,
+    $tanggalAkhir,
+    $tanggalAkhir,
+    $tanggalAkhir,
+    $tahun
+);
+
+$stmt->execute();
+
+$stmt->bind_result(
+    $id,
+    $kode,
+    $nama,
+    $tanggalAset,
+    $beli,
+    $location,
+    $recuring,
+    $keteranganlok,
+    $kelompok,
+    $del,
+    $namaCabang,
+    $akumSusut,
+    $susutTahunIni
+);
+
+// ============================================================
+// PENAMPUNG KELOMPOK
+// ============================================================
+
+$dataKelompok = [];
+
+foreach ($kelompokList as $namaKelompok) {
+
+    $dataKelompok[$namaKelompok] = [
+        'items' => [],
+        'beli' => 0,
+        'akum' => 0,
+        'tahun' => 0,
+        'nilai_buku' => 0
+    ];
+}
+
+$totalBeli = 0;
+$totalAkum = 0;
+$totalTahunIni = 0;
+$totalNilaiBuku = 0;
+$jumlahAset = 0;
+
+// ============================================================
+// AMBIL DATA
+// ============================================================
+
+while ($stmt->fetch()) {
+
+    $kode = (string)$kode;
+    $nama = (string)$nama;
+    $kelompok = (string)$kelompok;
+
+    if (!isset($dataKelompok[$kelompok])) {
+        $kelompok = 'Tanah';
+    }
+
+    $nilaiBeli = (float)$beli;
+    $nilaiAkum = (float)$akumSusut;
+    $nilaiTahunIni = (float)$susutTahunIni;
+
+    $nilaiBuku = $nilaiBeli - $nilaiAkum;
+
+    $item = [
+        'id' => $id,
+        'kode' => $kode,
+        'nama' => $nama,
+        'tanggal' => $tanggalAset,
+        'beli' => $nilaiBeli,
+        'akum' => $nilaiAkum,
+        'tahun' => $nilaiTahunIni,
+        'nilai_buku' => $nilaiBuku,
+        'location' => $location,
+        'nama_cabang' => $namaCabang,
+        'recuring' => $recuring,
+        'kelompok' => $kelompok
+    ];
+
+    $dataKelompok[$kelompok]['items'][] = $item;
+
+    $dataKelompok[$kelompok]['beli'] += $nilaiBeli;
+    $dataKelompok[$kelompok]['akum'] += $nilaiAkum;
+    $dataKelompok[$kelompok]['tahun'] += $nilaiTahunIni;
+    $dataKelompok[$kelompok]['nilai_buku'] += $nilaiBuku;
+
+    $totalBeli += $nilaiBeli;
+    $totalAkum += $nilaiAkum;
+    $totalTahunIni += $nilaiTahunIni;
+    $totalNilaiBuku += $nilaiBuku;
+
+    $jumlahAset++;
+}
+
+$stmt->close();
+$conn->close();
 
 ?>
-<script>
-function openPopup(url) {
-    window.open(url, '_blank', 'width=900,height=1050,scrollbars=yes,resizable=yes');
-}
-</script>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Aset - symotech.id</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Daftar Aset - AF Symotech</title>
+
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
 <style>
-    body {
-        color: maroon;
-        font-family: Arial, sans-serif;
-        margin: 0;
-        padding: 0;
-        background-image: linear-gradient(to right, #ea90e6, #6c6cc9);
-    }
-
-    .container {
-        overflow: hidden;
-    }
-
-    .form-container {
-        width: 100%;
-        max-width: 400px;
-        margin: 0 auto;
-        background-color: #fff;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    }
-
-    label {
-        font-weight: bold;
-    }
-
-    input[type="text"], select {
-        width: 100%;
-        padding: 8px;
-        margin-bottom: 15px;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        box-sizing: border-box;
-    }
-
-    input[type="submit"] {
-        width: 100%;
-        padding: 10px;
-        background-color: maroon;
-        color: #fff;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        transition: background-color 0.3s;
-    }
-
-    input[type="submit"]:hover {
-        background-color: #8b0000;
-    }
-
-    .table-container {
-        width: 100%;
-        overflow-x: auto;
-        margin-top: 20px;
-        color: white;
-    }
-
-    table {
-        width: 100%;
-        border-collapse: collapse;
-        color: white;
-    }
-
-    table, th, td {
-        border: 1px solid #ddd;
-        padding: 8px;
-        text-align: left;
-    }
-
-    th {
-        background-color: maroon;
-    }
-
-    th, td {
-        padding: 2px;
-    }
-
-    .home-icon i, .left-icon i {
-        color: maroon;
-        font-size: 24px;
-    }
-
-    .logo {
-        width: 100px;
-        height: auto;
-        display: block;
-        margin: 0 auto;
-    }
-
-    .home-icon {
-        position: absolute;
-        left: 0;
-        top: 0;
-        padding-left: 10px;
-    }
-
-    .left-icon {
-        position: absolute;
-        right: 0;
-        top: 0;
-        padding-right: 10px;
-    }
-
-    h2 {
-        text-align: center;
-        margin-bottom: 20px;
-        color: maroon;
-    }
-
-    /* Media Queries for Mobile */
-    @media (max-width: 600px) {
-        .form-container, .table-container {
-            width: 100%;
-            margin: 0px;
-        }
-
-        table, th, td {
-            font-size: 10px;
-        }
-
-        th, td {
-            padding: 4px;
-        }
-
-        .logo {
-            width: 80px;
-        }
-
-        .home-icon i, .left-icon i {
-            font-size: 20px;
-        }
-    }
-
-    /* Filter style */
-    .search-box {
-        margin-bottom: 15px;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    }
-
-    .search-box input {
-        padding: 8px;
-        width: 50%;
-        border-radius: 5px;
-        border: 1px solid #ccc;
-    }
-
-    .search-box button {
-        margin-left: 10px;
-        padding: 8px 15px;
-        background-color: maroon;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        transition: background-color 0.3s;
-    }
-
-    .search-box button:hover {
-        background-color: #8b0000;
-    }
-</style>
-</head>
-<body>
-
-<div class="table-container">
-    <a href="home.php" class="home-icon">
-        <i class="fas fa-home"></i>
-    </a>
-    <a href="home.php" class="left-icon">
-        <i class="fa-solid fa-circle-left"></i>
-    </a>
-    <h2>DAFTAR ASET</h2>
-
-    <!-- Filter input and Add button -->
-   <div class="search-box">
-    <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Cari berdasarkan nama atau lokasi...">
-    <button onclick="location.href='asetin.php'"><i class="fa-solid fa-plus"></i> Add (via bank)</button>
-      
-    <button onclick="location.href='asetinc.php'"><i class="fa-solid fa-plus"></i> Add (via cash)</button>
-    <button onclick="location.href='asetcut.php'"></i> Aset cut-off</button>
-    <button onclick="location.href='download_excel.php'"><i class="fa-solid fa-file-excel"></i> Download Excel</button>
-      <!-- <button onclick="location.href='download_pdf.php'"><i class="fa-solid fa-file-pdf"></i> Download PDF</button> -->
-</div>
-
-
-<?php
-
-
-// Query untuk mengambil data dari tabel aset dan nama_cabang dari tabel location
-$sql = "SELECT aset.*, location.nama_cabang 
-        FROM aset 
-        LEFT JOIN location ON aset.location = location.idl 
-        ORDER BY aset.id";
-$result = $conn->query($sql);
-
-$total_beli = 0;
-$total_susut = 0;
-$total_nilai_buku = 0;
-
-if ($result->num_rows > 0) {
-    echo "<table id='asetTable'>";
-    echo "<thead><tr>
-            <th>No</th>
-            <th>Kode</th>
-            <th>Nama</th>
-            <th>Tanggal</th>
-            <th>Lokasi</th>
-           
-            <th>Beli</th>
-            <th>Akum Susut</th>
-            <th>Nilai Buku</th>
-            <th>No Recuring</th>
-            <th>Action</th>
-          </tr></thead>";
-    echo "<tbody>";
-
-    $no = 1;
-
-    while ($row = $result->fetch_assoc()) {
-        // Ambil total dari kolom `susut` di tabel `susut` berdasarkan `kode`
-        $kode = $row["kode"];
-        $sql_susut = "SELECT SUM(susut) FROM susut WHERE kode = ?";
-        $stmt = $conn->prepare($sql_susut);
-        $stmt->bind_param("s", $kode);
-        $stmt->execute();
-        $stmt->bind_result($total_susut_item);
-        $stmt->fetch();
-        $stmt->close();
-
-        $total_susut_item = $total_susut_item ?? 0;
-
-        // Hitung nilai buku
-        $nilai_buku = $row["beli"] - $total_susut_item;
-
-        // Tambahkan ke total keseluruhan
-        $total_beli += $row["beli"];
-        $total_susut += $total_susut_item;
-        $total_nilai_buku += $nilai_buku;
-
-        echo "<tr>";
-        echo "<td>" . $no++ . "</td>";
-        echo "<td>" . htmlspecialchars($row["kode"]) . "</td>";
-        echo "<td>" . htmlspecialchars($row["nama"]) . "</td>";
-        echo "<td>" . htmlspecialchars($row["tanggal"]) . "</td>";
-        echo "<td>" . htmlspecialchars($row["nama_cabang"]) . "</td>";
-       
-        echo "<td>" . number_format($row["beli"], 2, ',', '.') . "</td>";
-        echo "<td>" . number_format($total_susut_item, 2, ',', '.') . "</td>";
-        echo "<td>" . number_format($nilai_buku, 2, ',', '.') . "</td>";
-        echo "<td>" . ($row["recuring"] !== null ? htmlspecialchars($row["recuring"]) : "") . "</td>";
-        echo "<td style='max-width: 40px; padding: 2px;'>
-                <div style='display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px;'>
-                    <a href='#' onclick=\"openPopup('asetrecur.php?id=" . urlencode($row["id"]) . "')\" title='Lihat BDM Recur'>
-                        <i class='fa-solid fa-chart-gantt' style='font-size: 20px; color: white;'></i>
-                    </a>
-                    <a href='#' onclick=\"openPopup('asetrecurdetail.php?kode=" . urlencode($row["kode"]) . "')\" title='Lihat Detail'>
-                        <i class='fa-solid fa-list' style='font-size: 20px; color: oceanblue;'></i>
-                    </a>
-                    <a href='#' onclick=\"openPopup('asetedit.php?id=" . urlencode($row["id"]) . "')\" title='Edit BDM'>
-                        <i class='fa-solid fa-screwdriver-wrench' style='font-size: 20px; color: blue;'></i>
-                    </a>
-                    <a href='#' onclick=\"openPopup('asetjual.php?id=" . urlencode($row["id"]) . "')\" title='Jual Aset'>
-                        <i class='fa-solid fa-cart-shopping' style='font-size: 20px; color: yellow;'></i>
-                    </a>
-                    <a href='barcode.php?kode=" . urlencode($row["kode"]) ."'>
-                        <i class='fa-solid fa-qrcode' style='font-size: 20px; color: blue;'></i>
-                    </a>
-                    <a href='asetdel.php?id=" . urlencode($row["id"]) . "' onclick=\"return confirm('Yakin ingin menghapus aset ini?')\">
-                        <i class='fa-solid fa-trash-can' style='font-size: 20px; color: red;'></i>
-                    </a>
-                </div>
-              </td>";
-        echo "</tr>";
-    }
-
-    // Baris total
-    echo "<tr style='font-weight: bold; background-color: #f0f0f0;'>";
-    echo "<td colspan='6' style='text-align:right;'>Total:</td>";
-    echo "<td>" . number_format($total_beli, 2, ',', '.') . "</td>";
-    echo "<td>" . number_format($total_susut, 2, ',', '.') . "</td>";
-    echo "<td>" . number_format($total_nilai_buku, 2, ',', '.') . "</td>";
-    echo "<td colspan='2'></td>";
-    echo "</tr>";
-
-    echo "</tbody>";
-    echo "</table>";
-} else {
-    echo "<p>Tidak ada data aset.</p>";
+* {
+    box-sizing: border-box;
 }
 
-$conn->close();
-?>
+body {
+    margin: 0;
+    padding: 15px;
+    font-family: Arial, sans-serif;
+    background: #f2f4f8;
+    color: #263247;
+}
 
+.container {
+    max-width: 1800px;
+    margin: auto;
+}
 
+.header {
+    background: linear-gradient(135deg, #541020, #951f3b);
+    color: white;
+    border-radius: 13px;
+    padding: 20px;
+    margin-bottom: 18px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.12);
+}
+
+.header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.header h2 {
+    margin: 0;
+    font-size: 23px;
+}
+
+.header p {
+    margin: 7px 0 0;
+    font-size: 13px;
+    opacity: .85;
+}
+
+.header a {
+    color: white;
+    font-size: 23px;
+    margin-right: 12px;
+    text-decoration: none;
+}
+
+.filter-panel {
+    background: white;
+    border-radius: 12px;
+    padding: 15px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+
+.filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 12px;
+}
+
+.filter-group {
+    flex: 1;
+    min-width: 170px;
+}
+
+.filter-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 6px;
+    color: #596579;
+}
+
+.filter-group input,
+.filter-group select {
+    width: 100%;
+    height: 40px;
+    border: 1px solid #d9dee8;
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 14px;
+    background: #fff;
+}
+
+.btn {
+    border: none;
+    border-radius: 7px;
+    padding: 10px 13px;
+    color: white;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    white-space: nowrap;
+    transition: .2s;
+}
+
+.btn:hover {
+    opacity: .85;
+    transform: translateY(-1px);
+}
+
+.btn-primary { background: #7c1831; }
+.btn-success { background: #16834a; }
+.btn-info { background: #087da5; }
+.btn-warning { background: #c58a14; }
+.btn-secondary { background: #5e6878; }
+.btn-danger { background: #c73535; }
+.btn-dark { background: #283548; }
+
+.button-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 14px;
+}
+
+.dashboard {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.stat-card {
+    background: white;
+    padding: 17px;
+    border-radius: 11px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    border-left: 4px solid #8c1935;
+    min-width: 0;
+}
+
+.stat-card:nth-child(2) { border-color: #087da5; }
+.stat-card:nth-child(3) { border-color: #16834a; }
+.stat-card:nth-child(4) { border-color: #c58a14; }
+
+.stat-label {
+    font-size: 12px;
+    color: #778195;
+    margin-bottom: 9px;
+    font-weight: bold;
+}
+
+.stat-value {
+    font-size: 17px;
+    font-weight: bold;
+    color: #263247;
+    overflow-wrap: anywhere;
+}
+
+.stat-icon {
+    float: right;
+    font-size: 22px;
+    opacity: .3;
+}
+
+.table-card {
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.06);
+}
+
+.table-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 5px 3px 13px;
+}
+
+.table-heading h3 {
+    margin: 0;
+    font-size: 17px;
+    color: #541020;
+}
+
+.table-heading span {
+    color: #778195;
+    font-size: 12px;
+}
+
+.table-container {
+    width: 100%;
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    min-width: 1250px;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+thead th {
+    background: #541020;
+    color: white;
+    padding: 12px 8px;
+    text-align: center;
+    border: 1px solid #753044;
+    white-space: nowrap;
+}
+
+tbody td {
+    padding: 9px 8px;
+    border: 1px solid #e5e8ef;
+    color: #364154;
+}
+
+tbody tr.detail-row:nth-child(even) {
+    background: #f8f9fc;
+}
+
+tbody tr.detail-row:hover {
+    background: #fff4f5;
+}
+
+.text-center { text-align: center; }
+
+.text-right {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.kode {
+    font-weight: bold;
+    color: #7c1831;
+}
+
+.nama-aset {
+    min-width: 180px;
+    font-weight: bold;
+}
+
+.negative { color: #d12b2b !important; }
+.positive { color: #16834a !important; }
+
+.group-heading td {
+    background: #e9edf5;
+    color: #541020;
+    font-weight: bold;
+    font-size: 13px;
+    padding: 11px;
+    border-top: 2px solid #c9ceda;
+}
+
+.group-subtotal td {
+    background: #f1e8eb;
+    color: #541020;
+    font-weight: bold;
+    border-top: 2px solid #d5b6c0;
+    padding: 11px 8px;
+}
+
+.grand-total td {
+    background: #541020;
+    color: white;
+    font-weight: bold;
+    padding: 14px 8px;
+    font-size: 13px;
+    border: 1px solid #753044;
+}
+
+.action-cell {
+    min-width: 115px;
+    text-align: center;
+}
+
+.action-grid {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 11px;
+    flex-wrap: wrap;
+}
+
+.action-grid a {
+    text-decoration: none;
+    font-size: 17px;
+}
+
+.empty {
+    text-align: center;
+    padding: 35px !important;
+    color: #8891a0;
+}
+
+.badge-year {
+    display: inline-block;
+    background: #fff;
+    color: #7c1831;
+    padding: 5px 12px;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.footer-note {
+    font-size: 11px;
+    color: #788397;
+    margin-top: 12px;
+    line-height: 1.7;
+}
+
+@media(max-width: 900px) {
+    .dashboard {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+@media(max-width: 600px) {
+    body { padding: 7px; }
+    .header { padding: 15px; }
+    .header h2 { font-size: 18px; }
+    .dashboard { gap: 8px; }
+    .stat-card { padding: 12px; }
+    .stat-value { font-size: 13px; }
+    .filter-group { min-width: 100%; }
+    .button-area .btn { flex: 1 1 45%; }
+    .table-card { padding: 7px; }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <div class="header">
+        <div class="header-top">
+            <div>
+                <a href="home.php" title="Home">
+                    <i class="fas fa-house"></i>
+                </a>
+
+                <h2 style="display:inline-block;">
+                    DAFTAR ASET
+                </h2>
+
+                <p>Manajemen Aset Tetap dan Penyusutan</p>
+            </div>
+
+            <span class="badge-year">
+                TAHUN <?= h($tahun) ?>
+            </span>
+        </div>
+    </div>
+
+    <!-- FILTER -->
+
+    <div class="filter-panel">
+
+        <form method="GET" action="">
+
+            <div class="filter-row">
+
+                <div class="filter-group">
+                    <label>
+                        <i class="fa-solid fa-calendar"></i>
+                        Pilih Tahun Laporan
+                    </label>
+
+                    <select name="tahun" onchange="this.form.submit()">
+
+                        <?php for ($y = $tahunAkhir; $y >= $tahunAwal; $y--): ?>
+
+                            <option value="<?= $y ?>"
+                                <?= $tahun == $y ? 'selected' : '' ?>>
+
+                                <?= $y ?>
+                                <?= $y == $tahunTerakhir ? '(Data Terakhir)' : '' ?>
+
+                            </option>
+
+                        <?php endfor; ?>
+
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        Cari Aset
+                    </label>
+
+                    <input
+                        type="text"
+                        id="searchInput"
+                        placeholder="Kode, nama, lokasi..."
+                        onkeyup="filterTable()"
+                    >
+                </div>
+
+                <div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa-solid fa-filter"></i>
+                        Tampilkan
+                    </button>
+                </div>
+
+            </div>
+
+        </form>
+
+        <!-- TOMBOL ACTION -->
+
+        <div class="button-area">
+            <?php if (file_exists(__DIR__ . '/asetin.php')): ?>
+            <a href="asetin.php" class="btn btn-success">
+                <i class="fa-solid fa-plus"></i>
+                Add via Bank
+            </a>
+            <?php endif; ?>
+
+            <?php if (file_exists(__DIR__ . '/dp_penjualan_aset.php')): ?>
+            <a href="dp_penjualan_aset.php" class="btn btn-info">
+                <i class="fa-solid fa-hand-holding-dollar"></i>
+                DP Penjualan Aset
+            </a>
+            <?php endif; ?>
+
+            <?php if (file_exists(__DIR__ . '/asetinc.php')): ?>
+            <a href="asetinc.php" class="btn btn-success">
+                <i class="fa-solid fa-plus"></i>
+                Add via Cash
+            </a>
+            <?php endif; ?>
+
+            <?php if (file_exists(__DIR__ . '/aset_nj.php')): ?>
+            <a href="aset_nj.php" class="btn btn-secondary">
+                <i class="fa-solid fa-plus"></i>
+                Add Tanpa Jurnal
+            </a>
+            <?php endif; ?>
+
+            <?php if (file_exists(__DIR__ . '/asetcut.php')): ?>
+            <a href="asetcut.php?tahun=<?= (int)$tahun ?>" class="btn btn-warning">
+                <i class="fa-solid fa-scissors"></i>
+                Aset Cut-off
+            </a>
+            <?php endif; ?>
+
+            <?php if (file_exists(__DIR__ . '/download_excel.php')): ?>
+            <a href="download_excel.php?tahun=<?= (int)$tahun ?>" class="btn btn-success">
+                <i class="fa-solid fa-file-excel"></i>
+                Download Excel
+            </a>
+            <?php endif; ?>
+
+            <?php if (file_exists(__DIR__ . '/asetcekrec.php')): ?>
+            <a href="asetcekrec.php" class="btn btn-dark">
+                <i class="fa-solid fa-rotate"></i>
+                Cek Recuring
+            </a>
+            <?php endif; ?>
+        </div>
+
+    </div>
+
+    <!-- DASHBOARD -->
+
+    <div class="dashboard">
+
+        <div class="stat-card">
+            <i class="fa-solid fa-building stat-icon"></i>
+            <div class="stat-label">JUMLAH ASET</div>
+            <div class="stat-value">
+                <?= number_format($jumlahAset, 0, ',', '.') ?>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <i class="fa-solid fa-wallet stat-icon"></i>
+            <div class="stat-label">TOTAL PEROLEHAN</div>
+            <div class="stat-value">
+                Rp <?= rupiah($totalBeli) ?>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <i class="fa-solid fa-chart-line stat-icon"></i>
+            <div class="stat-label">
+                PENYUSUTAN TAHUN <?= h($tahun) ?>
+            </div>
+            <div class="stat-value">
+                Rp <?= rupiah($totalTahunIni) ?>
+            </div>
+        </div>
+
+        <div class="stat-card">
+            <i class="fa-solid fa-coins stat-icon"></i>
+            <div class="stat-label">TOTAL NILAI BUKU</div>
+            <div class="stat-value">
+                Rp <?= rupiah($totalNilaiBuku) ?>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- TABEL -->
+
+    <div class="table-card">
+
+        <div class="table-heading">
+
+            <h3>
+                <i class="fa-solid fa-table-list"></i>
+                Rincian Aset per Kelompok
+            </h3>
+
+            <span>
+                Periode laporan: 01 Januari <?= h($tahun) ?>
+                - 31 Desember <?= h($tahun) ?>
+            </span>
+
+        </div>
+
+        <div class="table-container">
+
+            <table id="asetTable">
+
+                <thead>
+                    <tr>
+                        <th>No</th>
+                        <th>Kelompok</th>
+                        <th>Kode</th>
+                        <th>Nama Aset</th>
+                        <th>Tanggal</th>
+                        <th>Lokasi</th>
+                        <th>Beli</th>
+                        <th>Akum Susut</th>
+                        <th>Penyusutan Tahun Ini</th>
+                        <th>Nilai Buku</th>
+                        <th>No Recuring</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                <?php
+
+                $no = 1;
+                $adaData = false;
+
+                foreach ($kelompokList as $namaKelompok):
+
+                    $group = $dataKelompok[$namaKelompok];
+
+                    if (count($group['items']) === 0) {
+                        continue;
+                    }
+
+                    $adaData = true;
+
+                ?>
+
+                    <!-- HEADER KELOMPOK -->
+
+                    <tr class="group-heading"
+                        data-type="heading"
+                        data-group="<?= h($namaKelompok) ?>">
+
+                        <td colspan="12">
+
+                            <i class="fa-solid fa-folder-open"></i>
+
+                            <?= h($namaKelompok) ?>
+
+                            <span style="float:right;">
+                                <?= count($group['items']) ?> Aset
+                            </span>
+
+                        </td>
+                    </tr>
+
+                    <!-- DETAIL ASET -->
+
+                    <?php foreach ($group['items'] as $row): ?>
+
+                        <tr
+                            class="detail-row"
+                            data-type="detail"
+                            data-group="<?= h($namaKelompok) ?>"
+                        >
+
+                            <td class="text-center">
+                                <?= $no++ ?>
+                            </td>
+
+                            <td>
+                                <?= h($row['kelompok']) ?>
+                            </td>
+
+                            <td class="kode">
+                                <?= h($row['kode']) ?>
+                            </td>
+
+                            <td class="nama-aset">
+                                <?= h($row['nama']) ?>
+                            </td>
+
+                            <td class="text-center">
+                                <?= tanggalIndo($row['tanggal']) ?>
+                            </td>
+
+                            <td>
+                                <?= h($row['nama_cabang'] ?? '') ?>
+                            </td>
+
+                            <td class="text-right">
+                                <?= rupiah($row['beli']) ?>
+                            </td>
+
+                            <td class="text-right">
+                                <?= rupiah($row['akum']) ?>
+                            </td>
+
+                            <td class="text-right positive">
+                                <?= rupiah($row['tahun']) ?>
+                            </td>
+
+                            <td class="text-right <?= $row['nilai_buku'] < 0 ? 'negative' : '' ?>">
+                                <?= rupiah($row['nilai_buku']) ?>
+                            </td>
+
+                            <td class="text-center">
+                                <?= h($row['recuring']) ?>
+                            </td>
+
+                            <td class="action-cell">
+
+                                <div class="action-grid">
+
+                                    <a href="#"
+                                       onclick="openPopup('asetrecur.php?id=<?= urlencode($row['id']) ?>'); return false;"
+                                       title="Lihat BDM Recur"
+                                       style="color:#7c1831;">
+                                        <i class="fa-solid fa-chart-gantt"></i>
+                                    </a>
+
+                                    <a href="#"
+                                       onclick="openPopup('asetrecurdetail.php?kode=<?= urlencode($row['kode']) ?>'); return false;"
+                                       title="Lihat Detail"
+                                       style="color:#087da5;">
+                                        <i class="fa-solid fa-list"></i>
+                                    </a>
+
+                                    <a href="#"
+                                       onclick="openPopup('asetedit.php?id=<?= urlencode($row['id']) ?>'); return false;"
+                                       title="Edit Aset"
+                                       style="color:#16834a;">
+                                        <i class="fa-solid fa-screwdriver-wrench"></i>
+                                    </a>
+
+                                    <a href="#"
+                                       onclick="openPopup('asetjual.php?id=<?= urlencode($row['id']) ?>'); return false;"
+                                       title="Jual Aset"
+                                       style="color:#c58a14;">
+                                        <i class="fa-solid fa-cart-shopping"></i>
+                                    </a>
+
+                                    <a href="barcode.php?kode=<?= urlencode($row['kode']) ?>"
+                                       title="Barcode"
+                                       style="color:#087da5;">
+                                        <i class="fa-solid fa-qrcode"></i>
+                                    </a>
+
+                                    <a href="asetdel.php?id=<?= urlencode($row['id']) ?>&tahun=<?= (int)$tahun ?>"
+                                       title="Hapus Aset"
+                                       style="color:#c73535;">
+                                        <i class="fa-solid fa-trash-can"></i>
+                                    </a>
+
+                                </div>
+
+                            </td>
+
+                        </tr>
+
+                    <?php endforeach; ?>
+
+                    <!-- SUBTOTAL -->
+
+                    <tr
+                        class="group-subtotal"
+                        data-type="subtotal"
+                        data-group="<?= h($namaKelompok) ?>"
+                    >
+
+                        <td colspan="6" class="text-right">
+                            SUBTOTAL <?= strtoupper(h($namaKelompok)) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($group['beli']) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($group['akum']) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($group['tahun']) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($group['nilai_buku']) ?>
+                        </td>
+
+                        <td colspan="2"></td>
+
+                    </tr>
+
+                <?php endforeach; ?>
+
+                <!-- GRAND TOTAL -->
+
+                <?php if ($adaData): ?>
+
+                    <tr class="grand-total">
+
+                        <td colspan="6" class="text-right">
+                            TOTAL KESELURUHAN
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($totalBeli) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($totalAkum) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($totalTahunIni) ?>
+                        </td>
+
+                        <td class="text-right">
+                            <?= rupiah($totalNilaiBuku) ?>
+                        </td>
+
+                        <td colspan="2"></td>
+
+                    </tr>
+
+                <?php else: ?>
+
+                    <tr>
+                        <td colspan="12" class="empty">
+                            <i class="fa-solid fa-folder-open fa-2x"></i>
+                            <br><br>
+                            Tidak ada data aset untuk tahun <?= h($tahun) ?>.
+                        </td>
+                    </tr>
+
+                <?php endif; ?>
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+        <div class="footer-note">
+
+            <i class="fa-solid fa-circle-info"></i>
+
+            Akum Susut = seluruh penyusutan sampai dengan tahun laporan.
+
+            <br>
+
+            Penyusutan Tahun Ini = penyusutan khusus tahun <?= h($tahun) ?>.
+
+            <br>
+
+            Nilai Buku = Harga Perolehan - Akumulasi Penyusutan.
+
+            <br>
+
+            Aset dengan del NULL tetap ditampilkan. Aset dengan del sama
+            dengan tahun laporan juga tetap ditampilkan. Aset baru tidak
+            ditampilkan mulai tahun setelah tahun penghapusannya.
+
+        </div>
+
+    </div>
 
 </div>
 
 <script>
-    function filterTable() {
-        var input, filter, table, tr, td, i, txtValue;
-        input = document.getElementById("searchInput");
-        filter = input.value.toLowerCase();
-        table = document.getElementById("asetTable");
-        tr = table.getElementsByTagName("tr");
 
-        for (i = 1; i < tr.length; i++) {
-            tr[i].style.display = "none"; // Default hide the row
-            tdNama = tr[i].getElementsByTagName("td")[1]; // Nama
-            tdLokasi = tr[i].getElementsByTagName("td")[3]; // Lokasi
-            if (tdNama || tdLokasi) {
-                if (tdNama.innerHTML.toLowerCase().indexOf(filter) > -1 || tdLokasi.innerHTML.toLowerCase().indexOf(filter) > -1) {
-                    tr[i].style.display = ""; // Show the row
-                }
-            }
+function openPopup(url) {
+    window.open(
+        url,
+        '_blank',
+        'width=900,height=1050,scrollbars=yes,resizable=yes'
+    );
+}
+
+function filterTable() {
+
+    const filter = document.getElementById('searchInput')
+        .value.toLowerCase().trim();
+
+    const rows = Array.from(
+        document.querySelectorAll('#asetTable tbody tr')
+    );
+
+    const groupCount = {};
+
+    rows.forEach(function(row) {
+
+        if (row.dataset.type !== 'detail') {
+            return;
         }
-    }
+
+        const cocok = row.innerText.toLowerCase().includes(filter);
+
+        row.style.display = cocok ? '' : 'none';
+
+        const group = row.dataset.group;
+
+        if (cocok) {
+            groupCount[group] = (groupCount[group] || 0) + 1;
+        }
+
+    });
+
+    rows.forEach(function(row) {
+
+        const type = row.dataset.type;
+
+        if (type === 'heading' || type === 'subtotal') {
+
+            const group = row.dataset.group;
+
+            row.style.display =
+                groupCount[group] > 0 ? '' : 'none';
+        }
+
+    });
+
+}
+
 </script>
 
-<script>
-    document.addEventListener('contextmenu', function(e) {
-        e.preventDefault();
-    });
-    document.addEventListener('keydown', function(e) {
-        if (e.keyCode == 123 || (e.ctrlKey && e.shiftKey && e.keyCode == 'I'.charCodeAt(0)) || (e.ctrlKey && e.shiftKey && e.keyCode == 'C'.charCodeAt(0)) || (e.ctrlKey && e.keyCode == 'U'.charCodeAt(0))) {
-            e.preventDefault();
-        }
-    });
-</script>
 </body>
 </html>

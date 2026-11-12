@@ -24,6 +24,7 @@ if (!isset($_SESSION['username'])) {
 }
 
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 $servername = getenv('DB_HOST') ?: die("DB_HOST tidak ditemukan.");
 $db_username = getenv('DB_USER') ?: die("DB_USER tidak ditemukan.");
@@ -35,6 +36,7 @@ if ($conn->connect_error) {
     die("Koneksi gagal: " . $conn->connect_error);
 }
 
+ensureAsetKelompokDelSchema($conn);
 $bulan = isset($_GET['bulan']) ? $_GET['bulan'] : date('m');
 $tahun = isset($_GET['tahun']) ? $_GET['tahun'] : date('Y');
 $cari = isset($_GET['cari']) ? $_GET['cari'] : '';
@@ -141,10 +143,11 @@ if ($bulan == "tahunan") {
 
 echo "<h2>Laporan Aset dan Penyusutan - $label_periode</h2>";
 
-$sql = "SELECT kode, nama, tanggal, beli FROM aset WHERE kode LIKE ? OR nama LIKE ? ORDER BY kode ASC";
+$sql = "SELECT kode, nama, tanggal, beli FROM aset WHERE (kode LIKE ? OR nama LIKE ?) AND (del IS NULL OR del >= ?) ORDER BY kode ASC";
 $stmt = $conn->prepare($sql);
 $cari_param = "%$cari%";
-$stmt->bind_param("ss", $cari_param, $cari_param);
+$tahun_int = (int)$tahun;
+$stmt->bind_param("ssi", $cari_param, $cari_param, $tahun_int);
 $stmt->execute();
 $stmt->store_result();
 $stmt->bind_result($kode, $nama, $tanggal, $beli);

@@ -28,6 +28,7 @@ if (!isset($_SESSION['username'])) {
 
 // Load konfigurasi dari config.php
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 
 
@@ -64,11 +65,14 @@ $sheet = $spreadsheet->getActiveSheet();
 $sheet->setTitle('Data Aset');
 
 // Header Kolom
-$headers = ['No', 'Kode', 'Nama', 'Tanggal', 'Lokasi', 'Devisi', 'Beli', 'Akum Susut', 'Nilai Buku', 'No Recuring'];
+$headers = ['No', 'Kelompok', 'Kode', 'Nama', 'Tanggal', 'Lokasi', 'Devisi', 'Beli', 'Akum Susut', 'Nilai Buku', 'No Recuring'];
 $sheet->fromArray($headers, null, 'A1');
 
 // Mengambil Data dari Database
-$sql = "SELECT * FROM aset ORDER BY id";
+ensureAsetKelompokDelSchema($conn);
+$tahunFilter = isset($_GET['tahun']) ? (int)$_GET['tahun'] : (int)date('Y');
+$tanggalAkhirFilter = sprintf('%04d-01-01', $tahunFilter + 1);
+$sql = "SELECT * FROM aset WHERE tanggal < '" . $conn->real_escape_string($tanggalAkhirFilter) . "' AND (del IS NULL OR del >= " . $tahunFilter . ") ORDER BY id";
 $result = $conn->query($sql);
 $rowNum = 2;
 $no = 1;
@@ -89,15 +93,16 @@ while ($row = $result->fetch_assoc()) {
 
     // Isi Data ke Excel
     $sheet->setCellValue('A' . $rowNum, $no++);
-    $sheet->setCellValue('B' . $rowNum, $row['kode']);
-    $sheet->setCellValue('C' . $rowNum, $row['nama']);
-    $sheet->setCellValue('D' . $rowNum, $row['tanggal']);
-    $sheet->setCellValue('E' . $rowNum, $row['location']);
-    $sheet->setCellValue('F' . $rowNum, $row['devisi']);
-    $sheet->setCellValue('G' . $rowNum, $row['beli']);
-    $sheet->setCellValue('H' . $rowNum, $total_susut);
-    $sheet->setCellValue('I' . $rowNum, $nilai_buku);
-    $sheet->setCellValue('J' . $rowNum, $row['recuring']);
+    $sheet->setCellValue('B' . $rowNum, $row['kelompok'] ?? '');
+    $sheet->setCellValue('C' . $rowNum, $row['kode']);
+    $sheet->setCellValue('D' . $rowNum, $row['nama']);
+    $sheet->setCellValue('E' . $rowNum, $row['tanggal']);
+    $sheet->setCellValue('F' . $rowNum, $row['location']);
+    $sheet->setCellValue('G' . $rowNum, $row['devisi'] ?? '');
+    $sheet->setCellValue('H' . $rowNum, $row['beli']);
+    $sheet->setCellValue('I' . $rowNum, $total_susut);
+    $sheet->setCellValue('J' . $rowNum, $nilai_buku);
+    $sheet->setCellValue('K' . $rowNum, $row['recuring']);
     $rowNum++;
 }
 

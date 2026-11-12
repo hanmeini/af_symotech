@@ -22,6 +22,7 @@ if (!isset($_SESSION['username'])) {
 
 // Load konfigurasi dari config.php
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 ;
 
@@ -221,6 +222,8 @@ if ($result->num_rows > 0) {
   <input type="textarea" id="namaaset" name="namaaset" placeholder="Masukkan nama aset..." required><br>
            <label for="keteranganlok">Keterangan detail (warna, jenis, ruangan/tempat meletakan, dipakai oleh siapa, dll:</label>
     <textarea id="keteranganlok" name="keteranganlok" rows="3" placeholder="Masukkan keterangan detail (warna, jenis, ruangan/tempat meletakan, dipakai oleh siapa, dll)" required></textarea><br><br>
+            <label for="kelompok">Kelompok Aset:</label>
+            <?= asetRenderKelompokSelect() ?><br>
           
            <label for="lampiran">Lampiran File:</label>
     <input type="file" id="lampiran" name="lampiran[]"><br>

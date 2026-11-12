@@ -22,6 +22,7 @@ if (!isset($_SESSION['username'])) {
 
 // Load konfigurasi dari config.php
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 
 
@@ -62,7 +63,9 @@ $location = $_POST['location'];
 $devisi = $_POST['devisi'];
 $kodeaset = $_POST['kodeaset'];
 $namaaset = $_POST['namaaset'];
+ensureAsetKelompokDelSchema($conn);
 $keteranganlok = $_POST['keteranganlok'];
+$kelompok = asetNormalizeKelompok($_POST['kelompok'] ?? '');
 
 $bulan = date('m', strtotime($tanggal));
 $tahun = date('Y', strtotime($tanggal));
@@ -109,12 +112,11 @@ for ($i = 0; $i < count($coa); $i++) {
 }
 
 // Simpan data ke tabel aset dengan total debet
-$sql_aset = "INSERT INTO aset (kode, nama, tanggal, keterangan, lampiran, beli, location, devisi, keteranganlok) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+$sql_aset = "INSERT INTO aset (kode, nama, tanggal, keterangan, lampiran, beli, location, devisi, keteranganlok, kelompok) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 $stmt = $conn->prepare($sql_aset);
 
 if ($stmt) {
-    $stmt->bind_param("sssssdsss", $kodeaset, $namaaset, $tanggal, $keterangan_value, $lampiran_value, $total_debet, $location, $devisi, $keteranganlok);
+    $stmt->bind_param("sssssdssss", $kodeaset, $namaaset, $tanggal, $keterangan_value, $lampiran_value, $total_debet, $location, $devisi, $keteranganlok, $kelompok);
 
     if ($stmt->execute()) {
         echo "Data aset berhasil disimpan.";

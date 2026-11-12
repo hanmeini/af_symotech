@@ -22,6 +22,7 @@ if (!isset($_SESSION['username'])) {
 
 // Load konfigurasi dari config.php
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 
 // Ambil variabel dari environment
@@ -41,6 +42,8 @@ if ($conn->connect_error) {
 }
 
 
+ensureAsetKelompokDelSchema($conn);
+
 if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['id'])) {
     $id = intval($_GET['id']);
     $sql = "SELECT * FROM aset WHERE id = $id";
@@ -52,20 +55,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['id'])) {
         exit();
     }
 } elseif ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $id = intval($_POST['id']);
-    $kode = $_POST['kode'];
-    $nama = $_POST['nama'];
-    $tanggal = $_POST['tanggal'];
-    $location = $_POST['location'];
-    $devisi = $_POST['devisi'];
+    $id = intval($_POST['id'] ?? 0);
+    $kode = trim($_POST['kode'] ?? '');
+    $nama = trim($_POST['nama'] ?? '');
+    $tanggal = trim($_POST['tanggal'] ?? '');
+    $location = trim($_POST['location'] ?? '');
+    $keteranganlok = trim($_POST['keteranganlok'] ?? '');
+    $kelompok = asetNormalizeKelompok($_POST['kelompok'] ?? '');
 
-
-    $sql = "UPDATE aset SET kode='$kode', nama='$nama', tanggal='$tanggal', location='$location', devisi='$devisi' WHERE id=$id";
-    if ($conn->query($sql) === TRUE) {
-        header("Location: aset.php"); // Ganti dengan halaman tabel daftar aset
+    $stmt_upd = $conn->prepare("UPDATE aset SET kode = ?, nama = ?, tanggal = ?, location = ?, keteranganlok = ?, kelompok = ? WHERE id = ?");
+    if (!$stmt_upd) {
+        die("Error prepare update: " . htmlspecialchars($conn->error));
+    }
+    $stmt_upd->bind_param("ssssssi", $kode, $nama, $tanggal, $location, $keteranganlok, $kelompok, $id);
+    if ($stmt_upd->execute()) {
+        $stmt_upd->close();
+        echo "<script>
+            if (window.opener && !window.opener.closed) {
+                window.opener.location.reload();
+                window.close();
+            } else {
+                window.location.href = 'aset.php';
+            }
+        </script>";
         exit();
     } else {
-        echo "Error: " . $conn->error;
+        echo "Error: " . htmlspecialchars($stmt_upd->error);
+        $stmt_upd->close();
     }
 }
 
@@ -221,6 +237,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'GET' && isset($_GET['id'])) {
           
 <label for="keteranganlok">Keterangan:</label>
 <textarea id="keteranganlok" name="keteranganlok" rows="3" required><?= isset($aset['keteranganlok']) ? htmlspecialchars($aset['keteranganlok']) : '' ?></textarea>
+
+<label for="kelompok">Kelompok Aset:</label>
+<?= asetRenderKelompokSelect($aset['kelompok'] ?? '') ?>
 
 
             </div>

@@ -23,6 +23,7 @@ if (!isset($_SESSION['username'])) {
 
 // Load konfigurasi dari config.php
 require_once 'config.php';
+require_once __DIR__ . '/aset_helper.php';
 
 
 
@@ -119,19 +120,26 @@ $stmt->bind_param("s", $kode_transaksi);
 $stmt->execute();
 $stmt->close();
 
-// Hapus data dari tabel aset
-$sql2 = "DELETE FROM aset WHERE id = ?";
+// Tandai tahun jual di kolom del tanpa menghapus data historis aset
+ensureAsetKelompokDelSchema($conn);
+$tahun_del = (int)date('Y', strtotime($tanggal));
+if ($tahun_del < 1900 || $tahun_del > 2155) {
+    $tahun_del = (int)date('Y');
+}
+$sql2 = "UPDATE aset SET del = ? WHERE id = ?";
 $stmt = $conn->prepare($sql2);
-$stmt->bind_param("i", $id);
-$stmt->execute();
-$stmt->close();
+if ($stmt) {
+    $stmt->bind_param("ii", $tahun_del, $id);
+    $stmt->execute();
+    $stmt->close();
+}
 
 // Tutup koneksi
 $conn->close();
 
 // Tampilkan notifikasi berhasil dan arahkan ke cetak_jurnal.php dengan kode transaksi
 echo "<script>
-    alert('Data jurnal berhasil disimpan dan aset dengan ID $id telah dihapus! Kode Transaksi: $kode_transaksi');
+    alert('Data jurnal berhasil disimpan dan aset dengan ID $id telah ditandai terjual (tahun del: $tahun_del)! Kode Transaksi: $kode_transaksi');
     window.location.href = 'cetak_jurnal.php?kode_transaksi=$kode_transaksi';
 </script>";
 
